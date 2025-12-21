@@ -1,0 +1,34 @@
+[package]
+name = "pbr-view"
+version = "0.1.0"
+edition = "2021"
+description = "PBR Texture Set Viewer with Bevy and egui"
+authors = ["PBR Viewer"]
+
+[dependencies]
+# Game engine with PBR support
+bevy = { version = "0.14", features = ["dynamic_linking"] }
+
+# UI
+bevy_egui = "0.29"
+egui = "0.28"
+
+# File dialog
+rfd = "0.14"
+
+# Logging
+log = "0.4"
+
+# Error handling
+anyhow = "1.0"
+thiserror = "1.0"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3
