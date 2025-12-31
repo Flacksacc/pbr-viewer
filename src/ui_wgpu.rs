@@ -93,7 +93,8 @@ pub fn build_ui(ctx: &Context, state: &mut AppState) {
                 state.material_changed = true;
             }
             
-            ui.label("UV Scale");
+            ui.label("UV Tile Size");
+            ui.label(RichText::new("Smaller = more repeats (finer pattern)").weak().small());
             if ui.add(Slider::new(&mut state.material_params.uv_scale, 0.1..=5.0).logarithmic(true)).changed() {
                 state.material_changed = true;
             }

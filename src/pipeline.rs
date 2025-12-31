@@ -54,7 +54,7 @@ pub struct MaterialUniform {
     pub metallic: f32,
     pub roughness: f32,
     pub normal_strength: f32,
-    pub _padding1: f32,
+    pub uv_scale: f32,
 }
 
 impl MaterialUniform {
@@ -65,7 +65,18 @@ impl MaterialUniform {
             metallic: 0.0,
             roughness: 0.5,
             normal_strength: 1.0,
-            _padding1: 0.0,
+            uv_scale: 1.0,
+        }
+    }
+    
+    pub fn from_material_params(params: &crate::state_wgpu::MaterialParams) -> Self {
+        Self {
+            base_color_tint: params.base_color_tint,
+            _padding0: 0.0,
+            metallic: params.metallic_multiplier,
+            roughness: params.roughness_multiplier,
+            normal_strength: params.normal_strength,
+            uv_scale: params.uv_scale,
         }
     }
 }
@@ -216,10 +227,11 @@ impl RenderPipeline {
         });
 
         // Create material bind group layout
+        // Make it accessible in both vertex and fragment stages for UV scale
         let material_bind_group_layout = device.create_bind_group_layout(&BindGroupLayoutDescriptor {
             entries: &[BindGroupLayoutEntry {
                 binding: 0,
-                visibility: ShaderStages::FRAGMENT,
+                visibility: ShaderStages::VERTEX | ShaderStages::FRAGMENT,
                 ty: BindingType::Buffer {
                     ty: BufferBindingType::Uniform,
                     has_dynamic_offset: false,
@@ -319,6 +331,7 @@ impl RenderPipeline {
         self.material_uniform.metallic = material.metallic_multiplier;
         self.material_uniform.roughness = material.roughness_multiplier;
         self.material_uniform.normal_strength = material.normal_strength;
+        self.material_uniform.uv_scale = material.uv_scale;
         queue.write_buffer(&self.material_buffer, 0, bytemuck::cast_slice(&[self.material_uniform]));
     }
 }

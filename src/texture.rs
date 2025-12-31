@@ -59,12 +59,12 @@ pub fn load_texture_from_image(
     
     let view = texture.create_view(&TextureViewDescriptor::default());
     let sampler = device.create_sampler(&SamplerDescriptor {
-        address_mode_u: AddressMode::ClampToEdge,
-        address_mode_v: AddressMode::ClampToEdge,
-        address_mode_w: AddressMode::ClampToEdge,
+        address_mode_u: AddressMode::Repeat,
+        address_mode_v: AddressMode::Repeat,
+        address_mode_w: AddressMode::Repeat,
         mag_filter: FilterMode::Linear,
         min_filter: FilterMode::Linear,
-        mipmap_filter: FilterMode::Nearest,
+        mipmap_filter: FilterMode::Linear,  // Use Linear for better mipmap quality
         ..Default::default()
     });
     
@@ -118,7 +118,7 @@ pub fn create_placeholder_texture(
         address_mode_w: AddressMode::Repeat,
         mag_filter: FilterMode::Linear,
         min_filter: FilterMode::Linear,
-        mipmap_filter: FilterMode::Nearest,
+        mipmap_filter: FilterMode::Linear,  // Use Linear for better mipmap quality
         ..Default::default()
     });
     

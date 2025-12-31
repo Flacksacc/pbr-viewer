@@ -45,37 +45,54 @@ var<uniform> material_params: MaterialParams;
 
 struct MaterialParams {
     base_color_tint: vec3<f32>,
+    _padding0: f32,
     metallic: f32,
     roughness: f32,
     normal_strength: f32,
+    uv_scale: f32,
 }
 
 @vertex
 fn vs_main(in: VertexInput) -> VertexOutput {
     var out: VertexOutput;
     
+    // Transform position to world space
     let world_pos = model * vec4<f32>(in.position, 1.0);
     out.world_position = world_pos.xyz;
     out.clip_position = view_proj * world_pos;
     
-    // Calculate normal matrix (transpose of inverse of upper-left 3x3 of model matrix)
-    // For rotation matrices (which preserve angles), transpose is sufficient
-    // This works correctly for rotation + uniform scale, approximate for non-uniform scale
-    let normal_matrix = transpose(mat3x3<f32>(
+    // Calculate proper normal matrix (inverse transpose of upper-left 3x3 of model matrix)
+    // For rotation matrices, transpose equals inverse, so transpose is correct
+    // Extract upper-left 3x3 from model matrix
+    let m = mat3x3<f32>(
         model[0].xyz,
         model[1].xyz,
         model[2].xyz,
-    ));
+    );
     
+    // For rotation matrices: transpose = inverse, so normal_matrix = transpose(m)
+    // For general matrices, we'd need inverse(transpose(m)), but for pure rotations this is correct
+    let normal_matrix = transpose(m);
+    
+    // Transform normal to world space
     out.world_normal = normalize(normal_matrix * in.normal);
-    out.uv = in.uv;
     
+    // Apply UV tiling with center pivot
+    // The UI "scale" is tile size: smaller scale = more repeats (finer pattern)
+    // So tiling = 1/scale. Scale around center (0.5, 0.5) to prevent drift
+    let epsilon = 0.0001;
+    let tiling = 1.0 / max(material_params.uv_scale, epsilon);
+    let pivot = vec2<f32>(0.5, 0.5);
+    out.uv = (in.uv - pivot) * tiling + pivot;
+    
+    // Transform tangent to world space
     let T = normalize(normal_matrix * in.tangent.xyz);
     let N = out.world_normal;
+    // Recalculate bitangent to ensure orthogonality
     let B = cross(N, T) * in.tangent.w;
     
     out.tangent = T;
-    out.bitangent = B;
+    out.bitangent = normalize(B);
     
     return out;
 }

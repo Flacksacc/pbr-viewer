@@ -166,7 +166,15 @@ fn main() -> Result<(), anyhow::Error> {
 fn handle_camera_input(render_state: &mut RenderState, queue: &wgpu::Queue) {
     let input = &mut render_state.input_state;
     
-    // Mouse rotation (right mouse button)
+    // Model rotation (left mouse button)
+    if input.left_mouse_pressed && input.mouse_delta.length_squared() > 0.0 {
+        let sensitivity = 0.005;
+        let rotation_y = glam::Quat::from_rotation_y(-input.mouse_delta.x * sensitivity);
+        let rotation_x = glam::Quat::from_rotation_x(-input.mouse_delta.y * sensitivity);
+        render_state.app_state.model_rotation = rotation_y * render_state.app_state.model_rotation * rotation_x;
+    }
+    
+    // Camera rotation (right mouse button)
     if input.right_mouse_pressed && input.mouse_delta.length_squared() > 0.0 {
         let sensitivity = 0.005;
         let delta_yaw = -input.mouse_delta.x * sensitivity;
@@ -183,6 +191,10 @@ fn handle_camera_input(render_state: &mut RenderState, queue: &wgpu::Queue) {
     // Update camera
     render_state.camera = render_state.orbit_camera.to_camera_with_aspect(render_state.camera.aspect);
     render_state.render_pipeline.update_camera(queue, &render_state.camera);
+    
+    // Update model matrix from rotation
+    let model_matrix = Mat4::from_quat(render_state.app_state.model_rotation);
+    render_state.render_pipeline.update_model(queue, model_matrix);
     
     // Reset frame input
     input.reset_frame();
@@ -242,6 +254,10 @@ fn render_frame(renderer: &mut Renderer, render_state: &mut RenderState, window:
                 );
                 render_state.app_state.material_changed = false;
             }
+            
+            // Always update model matrix from rotation (ensures it's current even if handle_camera_input wasn't called)
+            let model_matrix = Mat4::from_quat(render_state.app_state.model_rotation);
+            render_state.render_pipeline.update_model(&renderer.queue, model_matrix);
             
             // End egui frame and get output
             let egui_output = render_state.egui_state.end_frame(window);

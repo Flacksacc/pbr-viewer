@@ -98,18 +98,20 @@ pub fn create_sphere(subdivisions: u32) -> MeshData {
             
             let x = xy * sector_angle.cos();
             let y = xy * sector_angle.sin();
-            let position = [x, z, y];
-            let normal = [x, z, y];
+            // Correct coordinate system: [x, y, z] not [x, z, y]
+            let position = [x, y, z];
+            let normal = [x, y, z];  // Normal is same as position for unit sphere
             let u = j as f32 / sectors as f32;
             let v = i as f32 / stacks as f32;
             let uv = [u, 1.0 - v];
             
-            // Calculate tangent (simplified)
+            // Calculate proper tangent vector for sphere
+            // Tangent points along the direction of increasing u (around the sphere)
             let tangent = [
                 -sector_angle.sin(),
-                0.0,
                 sector_angle.cos(),
-                1.0,
+                0.0,
+                1.0,  // Handedness
             ];
             
             vertices.push(Vertex {
