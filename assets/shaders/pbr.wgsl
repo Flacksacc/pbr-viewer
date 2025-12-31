@@ -50,6 +50,8 @@ struct MaterialParams {
     roughness: f32,
     normal_strength: f32,
     uv_scale: f32,
+    view_mode: u32,
+    texture_flags: u32,
 }
 
 @vertex
@@ -99,24 +101,104 @@ fn vs_main(in: VertexInput) -> VertexOutput {
 
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
-    // Sample textures
-    let base_color_sample = textureSample(base_color_texture, base_color_sampler, in.uv);
-    let base_color = base_color_sample.rgb * material_params.base_color_tint;
+    // Check which textures are available
+    let has_base_color = (material_params.texture_flags & (1u << 0u)) != 0u;
+    let has_normal = (material_params.texture_flags & (1u << 1u)) != 0u;
+    let has_metallic_roughness = (material_params.texture_flags & (1u << 2u)) != 0u;
+    let has_ao = (material_params.texture_flags & (1u << 3u)) != 0u;
+    let has_emissive = (material_params.texture_flags & (1u << 4u)) != 0u;
+    let has_height = (material_params.texture_flags & (1u << 5u)) != 0u;
     
-    let normal_sample = textureSample(normal_texture, normal_sampler, in.uv);
-    let metallic_roughness = textureSample(metallic_roughness_texture, metallic_roughness_sampler, in.uv);
+    // Sample textures only if they exist, otherwise use defaults
+    var base_color: vec3<f32>;
+    if has_base_color {
+        let base_color_sample = textureSample(base_color_texture, base_color_sampler, in.uv);
+        base_color = base_color_sample.rgb * material_params.base_color_tint;
+    } else {
+        base_color = material_params.base_color_tint;
+    }
     
-    // Simple PBR (simplified for now)
+    var normal_sample: vec4<f32>;
+    if has_normal {
+        normal_sample = textureSample(normal_texture, normal_sampler, in.uv);
+    } else {
+        normal_sample = vec4<f32>(0.5, 0.5, 1.0, 1.0);  // Default flat normal
+    }
+    
+    var metallic_roughness: vec4<f32>;
+    if has_metallic_roughness {
+        metallic_roughness = textureSample(metallic_roughness_texture, metallic_roughness_sampler, in.uv);
+    } else {
+        metallic_roughness = vec4<f32>(0.0, 0.5, 0.0, 1.0);  // Default: no metallic, medium roughness
+    }
+    
+    // Extract values
     let metallic = metallic_roughness.b * material_params.metallic;
     let roughness = metallic_roughness.g * material_params.roughness;
     
-    // Simple lighting (directional light)
-    let light_dir = normalize(vec3<f32>(1.0, 1.0, 1.0));
-    let N = normalize(in.world_normal);
-    let NDotL = max(dot(N, light_dir), 0.0);
+    // Handle different view modes
+    let view_mode = material_params.view_mode;
     
-    let color = base_color * (0.3 + 0.7 * NDotL); // Simple ambient + diffuse
+    if view_mode == 0u {  // Lit
+        // Simple lighting (directional light)
+        let light_dir = normalize(vec3<f32>(1.0, 1.0, 1.0));
+        let N = normalize(in.world_normal);
+        let NDotL = max(dot(N, light_dir), 0.0);
+        let color = base_color * (0.3 + 0.7 * NDotL);
+        return vec4<f32>(color, 1.0);
+    } else if view_mode == 1u {  // BaseColor
+        if has_base_color {
+            return vec4<f32>(base_color, 1.0);
+        } else {
+            return vec4<f32>(0.5, 0.5, 0.5, 1.0);  // Gray if no texture
+        }
+    } else if view_mode == 2u {  // Normals
+        if has_normal {
+            return vec4<f32>(normal_sample.rgb, 1.0);
+        } else {
+            // Show geometry normals if no normal map
+            let N = normalize(in.world_normal);
+            return vec4<f32>(N * 0.5 + 0.5, 1.0);
+        }
+    } else if view_mode == 3u {  // Roughness
+        if has_metallic_roughness {
+            return vec4<f32>(vec3<f32>(roughness), 1.0);
+        } else {
+            return vec4<f32>(0.5, 0.5, 0.5, 1.0);  // Gray if no texture
+        }
+    } else if view_mode == 4u {  // Metallic
+        if has_metallic_roughness {
+            return vec4<f32>(vec3<f32>(metallic), 1.0);
+        } else {
+            return vec4<f32>(0.0, 0.0, 0.0, 1.0);  // Black if no texture
+        }
+    } else if view_mode == 5u {  // AO
+        if has_ao {
+            // AO would be in metallic_roughness.a or a separate texture
+            // For now, show metallic_roughness alpha if available
+            return vec4<f32>(vec3<f32>(metallic_roughness.a), 1.0);
+        } else {
+            return vec4<f32>(1.0, 1.0, 1.0, 1.0);  // White if no texture
+        }
+    } else if view_mode == 6u {  // Emissive
+        if has_emissive {
+            // Emissive would be a separate texture
+            // For now, show black
+            return vec4<f32>(0.0, 0.0, 0.0, 1.0);
+        } else {
+            return vec4<f32>(0.0, 0.0, 0.0, 1.0);  // Black if no texture
+        }
+    } else if view_mode == 7u {  // Height
+        if has_height {
+            // Height would be a separate texture
+            // For now, show gray
+            return vec4<f32>(0.5, 0.5, 0.5, 1.0);
+        } else {
+            return vec4<f32>(0.5, 0.5, 0.5, 1.0);  // Gray if no texture
+        }
+    }
     
-    return vec4<f32>(color, 1.0);
+    // Fallback
+    return vec4<f32>(base_color, 1.0);
 }
 

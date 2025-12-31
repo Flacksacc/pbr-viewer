@@ -19,3 +19,4 @@ pub fn load_shader_from_str(device: &Device, source: &'static str, label: Option
     })
 }
 
+

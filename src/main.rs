@@ -105,7 +105,12 @@ fn main() -> Result<(), anyhow::Error> {
     
     // Material params
     let mut app_state = WgpuAppState::default();
-    render_pipeline.update_material(&renderer.queue, &app_state.material_params);
+    render_pipeline.update_material(
+        &renderer.queue,
+        &app_state.material_params,
+        app_state.view_mode,
+        &app_state.loaded_textures,
+    );
     
     let mut render_state = RenderState {
         render_pipeline,
@@ -228,13 +233,50 @@ fn render_frame(renderer: &mut Renderer, render_state: &mut RenderState, window:
                             );
                             
                             // Update loaded texture status
+                            // Update loaded texture status by checking the folder again
                             render_state.app_state.loaded_textures.reset();
-                            // Check which textures were actually loaded
-                            // For now, we'll assume all are loaded if the folder was selected
-                            render_state.app_state.loaded_textures.base_color = true;
-                            render_state.app_state.loaded_textures.normal = true;
-                            render_state.app_state.loaded_textures.roughness = true;
-                            render_state.app_state.loaded_textures.metallic = true;
+                            if let Ok(entries) = std::fs::read_dir(folder_path) {
+                                for entry in entries.flatten() {
+                                    let path = entry.path();
+                                    if path.is_file() {
+                                        let file_name_lower = path.file_name()
+                                            .and_then(|n| n.to_str())
+                                            .map(|s| s.to_lowercase())
+                                            .unwrap_or_default();
+                                        
+                                        if file_name_lower.contains("basecolor") || 
+                                           file_name_lower.contains("base_color") ||
+                                           file_name_lower.contains("diffuse") ||
+                                           file_name_lower.contains("albedo") {
+                                            render_state.app_state.loaded_textures.base_color = true;
+                                        } else if file_name_lower.contains("normal") {
+                                            render_state.app_state.loaded_textures.normal = true;
+                                        } else if file_name_lower.contains("metallic") && file_name_lower.contains("roughness") {
+                                            render_state.app_state.loaded_textures.metallic = true;
+                                            render_state.app_state.loaded_textures.roughness = true;
+                                        } else if file_name_lower.contains("orm") ||
+                                                  (file_name_lower.contains("ao") && file_name_lower.contains("roughness") && file_name_lower.contains("metallic")) {
+                                            render_state.app_state.loaded_textures.orm = true;
+                                            render_state.app_state.loaded_textures.metallic = true;
+                                            render_state.app_state.loaded_textures.roughness = true;
+                                            render_state.app_state.loaded_textures.ao = true;
+                                        } else if file_name_lower.contains("roughness") || file_name_lower.contains("rough") {
+                                            render_state.app_state.loaded_textures.roughness = true;
+                                        } else if file_name_lower.contains("metallic") || file_name_lower.contains("metal") {
+                                            render_state.app_state.loaded_textures.metallic = true;
+                                        } else if file_name_lower.contains("ao") || file_name_lower.contains("occlusion") {
+                                            render_state.app_state.loaded_textures.ao = true;
+                                        } else if file_name_lower.contains("emissive") || file_name_lower.contains("emission") {
+                                            render_state.app_state.loaded_textures.emissive = true;
+                                        } else if file_name_lower.contains("height") || file_name_lower.contains("displacement") {
+                                            render_state.app_state.loaded_textures.height = true;
+                                        }
+                                    }
+                                }
+                            }
+                            
+                            // Trigger material update to refresh view mode
+                            render_state.app_state.material_changed = true;
                             
                             log::info!("Textures loaded from: {}", folder_path);
                         }
@@ -262,6 +304,8 @@ fn render_frame(renderer: &mut Renderer, render_state: &mut RenderState, window:
                 render_state.render_pipeline.update_material(
                     &renderer.queue,
                     &render_state.app_state.material_params,
+                    render_state.app_state.view_mode,
+                    &render_state.app_state.loaded_textures,
                 );
                 render_state.app_state.material_changed = false;
             }

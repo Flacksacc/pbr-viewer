@@ -47,7 +47,7 @@ pub fn build_ui(ctx: &Context, state: &mut AppState) {
                 for mode in ViewMode::all() {
                     if ui.selectable_label(state.view_mode == *mode, mode.name()).clicked() {
                         state.view_mode = *mode;
-                        state.material_changed = true;
+                        state.material_changed = true;  // This will trigger update_material with new view_mode
                     }
                 }
             });

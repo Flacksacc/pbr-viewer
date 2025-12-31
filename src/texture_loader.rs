@@ -49,27 +49,30 @@ impl TextureLoader {
         }
         
         // Load textures (use placeholder if not found)
-        let base_color = if let Some(path) = base_color_path {
+        let (base_color, has_base_color) = if let Some(path) = base_color_path {
             let bytes = std::fs::read(&path)?;
-            texture::load_texture(device, queue, &bytes, Some("base_color"))?
+            (texture::load_texture(device, queue, &bytes, Some("base_color"))?, true)
         } else {
-            texture::create_placeholder_texture(device, queue, [128, 128, 128, 255], Some("base_color_placeholder"))
+            (texture::create_placeholder_texture(device, queue, [128, 128, 128, 255], Some("base_color_placeholder")), false)
         };
         
-        let normal = if let Some(path) = normal_path {
+        let (normal, has_normal) = if let Some(path) = normal_path {
             let bytes = std::fs::read(&path)?;
-            texture::load_texture(device, queue, &bytes, Some("normal"))?
+            (texture::load_texture(device, queue, &bytes, Some("normal"))?, true)
         } else {
-            texture::create_placeholder_texture(device, queue, [128, 128, 255, 255], Some("normal_placeholder"))
+            (texture::create_placeholder_texture(device, queue, [128, 128, 255, 255], Some("normal_placeholder")), false)
         };
         
-        let metallic_roughness = if let Some(path) = metallic_roughness_path.or(orm_path) {
+        let (metallic_roughness, has_metallic_roughness) = if let Some(path) = metallic_roughness_path.or(orm_path) {
             let bytes = std::fs::read(&path)?;
-            texture::load_texture(device, queue, &bytes, Some("metallic_roughness"))?
+            (texture::load_texture(device, queue, &bytes, Some("metallic_roughness"))?, true)
         } else {
-            texture::create_placeholder_texture(device, queue, [0, 128, 0, 255], Some("metallic_roughness_placeholder"))
+            (texture::create_placeholder_texture(device, queue, [0, 128, 0, 255], Some("metallic_roughness_placeholder")), false)
         };
         
+        // Return texture set and availability info
+        // Note: We'll need to update the return type or use a different approach
+        // For now, we'll return the textures and the caller can track availability
         Ok(TextureSet {
             base_color,
             normal,

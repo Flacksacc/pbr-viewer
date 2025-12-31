@@ -46,7 +46,7 @@ impl ModelUniform {
 }
 
 /// Material parameters uniform
-#[repr(C)]
+#[repr(C, align(16))]
 #[derive(Debug, Clone, Copy, Pod, Zeroable)]
 pub struct MaterialUniform {
     pub base_color_tint: [f32; 3],
@@ -55,6 +55,9 @@ pub struct MaterialUniform {
     pub roughness: f32,
     pub normal_strength: f32,
     pub uv_scale: f32,
+    pub view_mode: u32,  // ViewMode as u32
+    pub texture_flags: u32,  // Bit flags: bit 0=base_color, bit 1=normal, bit 2=metallic_roughness, bit 3=ao, bit 4=emissive, bit 5=height
+    pub _padding1: [u32; 2],  // Padding to make struct 48 bytes (multiple of 16)
 }
 
 impl MaterialUniform {
@@ -66,17 +69,9 @@ impl MaterialUniform {
             roughness: 0.5,
             normal_strength: 1.0,
             uv_scale: 1.0,
-        }
-    }
-    
-    pub fn from_material_params(params: &crate::state_wgpu::MaterialParams) -> Self {
-        Self {
-            base_color_tint: params.base_color_tint,
-            _padding0: 0.0,
-            metallic: params.metallic_multiplier,
-            roughness: params.roughness_multiplier,
-            normal_strength: params.normal_strength,
-            uv_scale: params.uv_scale,
+            view_mode: 0,  // Lit
+            texture_flags: 0,
+            _padding1: [0, 0],
         }
     }
 }
@@ -326,12 +321,32 @@ impl RenderPipeline {
         queue.write_buffer(&self.model_buffer, 0, bytemuck::cast_slice(&[self.model_uniform]));
     }
 
-    pub fn update_material(&mut self, queue: &Queue, material: &crate::state_wgpu::MaterialParams) {
+    pub fn update_material(
+        &mut self,
+        queue: &Queue,
+        material: &crate::state_wgpu::MaterialParams,
+        view_mode: crate::state_wgpu::ViewMode,
+        loaded_textures: &crate::state_wgpu::LoadedTextures,
+    ) {
         self.material_uniform.base_color_tint = material.base_color_tint;
         self.material_uniform.metallic = material.metallic_multiplier;
         self.material_uniform.roughness = material.roughness_multiplier;
         self.material_uniform.normal_strength = material.normal_strength;
         self.material_uniform.uv_scale = material.uv_scale;
+        
+        // Set view mode as u32
+        self.material_uniform.view_mode = view_mode as u32;
+        
+        // Pack texture availability flags into a u32
+        let mut flags = 0u32;
+        if loaded_textures.base_color { flags |= 1 << 0; }
+        if loaded_textures.normal { flags |= 1 << 1; }
+        if loaded_textures.metallic || loaded_textures.orm { flags |= 1 << 2; }
+        if loaded_textures.ao || loaded_textures.orm { flags |= 1 << 3; }
+        if loaded_textures.emissive { flags |= 1 << 4; }
+        if loaded_textures.height { flags |= 1 << 5; }
+        self.material_uniform.texture_flags = flags;
+        
         queue.write_buffer(&self.material_buffer, 0, bytemuck::cast_slice(&[self.material_uniform]));
     }
 }
