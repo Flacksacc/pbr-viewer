@@ -1,7 +1,7 @@
 //! egui UI implementation for wgpu
 
 use egui::*;
-use crate::state_wgpu::{AppState, ViewMode, TessellationDebugMode, MaterialParams, GpuTessellationParams};
+use crate::state_wgpu::{AppState, ViewMode, TessellationDebugMode};
 use crate::mesh_wgpu::MeshType;
 
 /// Build the egui UI
@@ -24,6 +24,11 @@ pub fn build_ui(ctx: &Context, state: &mut AppState) {
         .collapsible(true)
         .show(ctx, |ui| {
             ui.set_min_width(280.0);
+            
+            // Make the content scrollable
+            ScrollArea::vertical()
+                .auto_shrink([false; 2])
+                .show(ui, |ui| {
             
             // Mesh Selection
             ui.add_space(8.0);
@@ -231,6 +236,8 @@ pub fn build_ui(ctx: &Context, state: &mut AppState) {
             
             // Texture Loading
             ui.heading(RichText::new("📁 Textures").size(16.0));
+            
+            // Load folder button
             if ui.button("📂 Load Texture Folder").clicked() {
                 if let Some(folder) = rfd::FileDialog::new()
                     .set_title("Select Texture Folder")
@@ -247,37 +254,52 @@ pub fn build_ui(ctx: &Context, state: &mut AppState) {
                 ui.label(RichText::new("No texture folder loaded").weak().small());
             }
             
-            // Show loaded texture status
-            if state.texture_folder.is_some() {
-                ui.add_space(4.0);
-                ui.group(|ui| {
-                    ui.label("Detected textures:");
-                    ui.horizontal_wrapped(|ui| {
-                        let tex = &state.loaded_textures;
-                        if tex.base_color {
-                            ui.label(RichText::new("✓ Color").color(Color32::from_rgb(100, 200, 100)).small());
+            ui.add_space(8.0);
+            ui.separator();
+            ui.add_space(8.0);
+            
+            // Individual texture loading
+            ui.heading(RichText::new("Individual Textures").size(14.0));
+            
+            // Helper macro to create texture row
+            macro_rules! texture_row {
+                ($ui:expr, $state:expr, $label:expr, $checked:expr, $handle:ident) => {
+                    $ui.horizontal(|ui| {
+                        // Show checkbox state (read-only indicator using symbol)
+                        let checkbox_symbol = if $checked { "✓" } else { "☐" };
+                        ui.label(RichText::new(format!("{} {}", checkbox_symbol, $label)).size(14.0));
+                        
+                        // File name display
+                        if let Some(name) = $state.texture_handles.get_file_name(stringify!($handle)) {
+                            ui.label(RichText::new(format!("({})", name)).weak().small());
+                        } else {
+                            ui.label(RichText::new("(none)").weak().small());
                         }
-                        if tex.normal {
-                            ui.label(RichText::new("✓ Normal").color(Color32::from_rgb(100, 200, 100)).small());
-                        }
-                        if tex.roughness || tex.orm {
-                            ui.label(RichText::new("✓ Rough").color(Color32::from_rgb(100, 200, 100)).small());
-                        }
-                        if tex.metallic || tex.orm {
-                            ui.label(RichText::new("✓ Metal").color(Color32::from_rgb(100, 200, 100)).small());
-                        }
-                        if tex.ao || tex.orm {
-                            ui.label(RichText::new("✓ AO").color(Color32::from_rgb(100, 200, 100)).small());
-                        }
-                        if tex.emissive {
-                            ui.label(RichText::new("✓ Emissive").color(Color32::from_rgb(100, 200, 100)).small());
-                        }
-                        if tex.height {
-                            ui.label(RichText::new("✓ Height").color(Color32::from_rgb(100, 200, 100)).small());
+                        
+                        // Load button
+                        if ui.small_button("📄").clicked() {
+                            if let Some(file) = rfd::FileDialog::new()
+                                .set_title(&format!("Select {} Texture", $label))
+                                .add_filter("Image", &["png", "jpg", "jpeg", "tga", "bmp", "dds"])
+                                .pick_file()
+                            {
+                                $state.texture_handles.$handle = Some(file.to_string_lossy().to_string());
+                                $state.textures_need_reload = true;
+                            }
                         }
                     });
-                });
+                };
             }
+            
+            texture_row!(ui, state, "Base Color", state.loaded_textures.base_color, base_color);
+            texture_row!(ui, state, "Normal", state.loaded_textures.normal, normal);
+            texture_row!(ui, state, "Metallic", state.loaded_textures.metallic || state.loaded_textures.orm, metallic);
+            texture_row!(ui, state, "Roughness", state.loaded_textures.roughness || state.loaded_textures.orm, roughness);
+            texture_row!(ui, state, "ORM", state.loaded_textures.orm, orm);
+            texture_row!(ui, state, "AO", state.loaded_textures.ao || state.loaded_textures.orm, ao);
+            texture_row!(ui, state, "Emissive", state.loaded_textures.emissive, emissive);
+            texture_row!(ui, state, "Height", state.loaded_textures.height, height);
+                }); // End ScrollArea
         });
 }
 

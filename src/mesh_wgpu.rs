@@ -1,6 +1,5 @@
 //! Mesh generation for wgpu renderer
 
-use glam::{Vec3, Vec2};
 
 /// Vertex data structure for wgpu
 #[repr(C)]
@@ -128,7 +127,7 @@ pub fn create_sphere(subdivisions: u32) -> MeshData {
         let mut k1 = i * (sectors + 1);
         let mut k2 = k1 + sectors + 1;
         
-        for j in 0..sectors {
+        for _j in 0..sectors {
             if i != 0 {
                 indices.push(k1 as u32);
                 indices.push(k2 as u32);
@@ -198,6 +197,7 @@ pub fn create_cube() -> MeshData {
 }
 
 /// Create a plane mesh
+#[allow(dead_code)]
 pub fn create_plane(subdivisions: u32) -> MeshData {
     let subdivs = subdivisions.clamp(1, 256);
     
@@ -246,6 +246,7 @@ pub fn create_plane(subdivisions: u32) -> MeshData {
 }
 
 /// Create a rounded rectangle mesh
+#[allow(dead_code)]
 pub fn create_rounded_rect(subdivisions: u32, corner_radius: f32) -> MeshData {
     let subdivs = subdivisions.clamp(8, 256);
     let radius = corner_radius.clamp(0.0, 0.45);

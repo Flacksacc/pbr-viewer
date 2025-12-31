@@ -2,7 +2,7 @@
 
 use wgpu::*;
 use wgpu::util::DeviceExt;
-use crate::mesh_wgpu::{MeshData, Vertex};
+use crate::mesh_wgpu::MeshData;
 
 /// GPU mesh buffers
 pub struct MeshBuffer {

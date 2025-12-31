@@ -3,6 +3,7 @@
 use wgpu::*;
 use winit::window::Window;
 
+#[allow(deprecated)]
 use raw_window_handle::{HasRawWindowHandle, HasRawDisplayHandle};
 
 /// Main renderer struct
@@ -28,6 +29,7 @@ impl Renderer {
         
         // Create surface using raw window handle
         // The 'static lifetime is safe here because the window lives as long as the renderer
+        #[allow(deprecated)]
         let surface = unsafe {
             instance.create_surface_unsafe(wgpu::SurfaceTargetUnsafe::RawHandle {
                 raw_display_handle: window.raw_display_handle()?,

@@ -1,6 +1,6 @@
 //! Camera system for wgpu renderer
 
-use glam::{Mat4, Quat, Vec3};
+use glam::{Mat4, Vec3};
 
 /// Camera controller with orbit behavior
 pub struct Camera {
@@ -72,6 +72,7 @@ impl OrbitCamera {
         self.target + Vec3::new(x, y, z)
     }
     
+    #[allow(dead_code)]
     pub fn to_camera(&self) -> Camera {
         let position = self.calculate_position();
         Camera::new(position, self.target)

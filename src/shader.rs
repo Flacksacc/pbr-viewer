@@ -4,6 +4,7 @@ use wgpu::*;
 use std::borrow::Cow;
 
 /// Load a shader module from WGSL source
+#[allow(dead_code)]
 pub fn load_shader(device: &Device, source: &str, label: Option<&str>) -> ShaderModule {
     device.create_shader_module(ShaderModuleDescriptor {
         label,

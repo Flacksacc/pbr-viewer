@@ -151,6 +151,29 @@ pub struct TextureHandles {
     pub height: Option<String>,
 }
 
+impl TextureHandles {
+    pub fn get_file_name(&self, texture_type: &str) -> Option<String> {
+        let path = match texture_type {
+            "base_color" => &self.base_color,
+            "normal" => &self.normal,
+            "roughness" => &self.roughness,
+            "metallic" => &self.metallic,
+            "orm" => &self.orm,
+            "ao" => &self.ao,
+            "emissive" => &self.emissive,
+            "height" => &self.height,
+            _ => return None,
+        };
+        
+        path.as_ref().and_then(|p| {
+            std::path::Path::new(p)
+                .file_name()
+                .and_then(|n| n.to_str())
+                .map(|s| s.to_string())
+        })
+    }
+}
+
 /// Tracks which textures have been loaded
 #[derive(Debug, Clone, Default)]
 pub struct LoadedTextures {

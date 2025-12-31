@@ -68,7 +68,7 @@ fn main() -> Result<(), anyhow::Error> {
     })?;
     
     // Initialize egui
-    let mut egui_state = EguiState::new(
+    let egui_state = EguiState::new(
         &renderer.device,
         &renderer.config,
         window_ref,
@@ -94,7 +94,7 @@ fn main() -> Result<(), anyhow::Error> {
     let mesh_buffer = MeshBuffer::new(&renderer.device, &mesh_data);
     
     // Camera setup
-    let mut orbit_camera = OrbitCamera::new(glam::Vec3::ZERO, 3.0);
+    let orbit_camera = OrbitCamera::new(glam::Vec3::ZERO, 3.0);
     let aspect = renderer.size.width as f32 / renderer.size.height as f32;
     let camera = orbit_camera.to_camera_with_aspect(aspect);
     render_pipeline.update_camera(&renderer.queue, &camera);
@@ -104,7 +104,7 @@ fn main() -> Result<(), anyhow::Error> {
     render_pipeline.update_model(&renderer.queue, model_matrix);
     
     // Material params
-    let mut app_state = WgpuAppState::default();
+    let app_state = WgpuAppState::default();
     render_pipeline.update_material(
         &renderer.queue,
         &app_state.material_params,
@@ -218,71 +218,107 @@ fn render_frame(renderer: &mut Renderer, render_state: &mut RenderState, window:
             
             // Handle texture loading if needed
             if render_state.app_state.textures_need_reload {
+                use crate::texture_loader::{TextureLoader, TexturePaths, detect_textures_in_directory};
+                
+                // Build texture paths from folder detection and individual selections
+                let mut texture_paths = TexturePaths::default();
+                
+                // First, detect textures from folder if provided
                 if let Some(ref folder_path) = render_state.app_state.texture_folder {
-                    match crate::texture_loader::TextureLoader::load_from_directory(
-                        &renderer.device,
-                        &renderer.queue,
-                        std::path::Path::new(folder_path),
-                    ) {
-                        Ok(new_texture_set) => {
-                            // Update texture bind group
-                            let texture_bind_group_layout = TextureSet::bind_group_layout(&renderer.device);
-                            render_state.texture_bind_group = new_texture_set.create_bind_group(
-                                &renderer.device,
-                                &texture_bind_group_layout,
-                            );
-                            
-                            // Update loaded texture status
-                            // Update loaded texture status by checking the folder again
-                            render_state.app_state.loaded_textures.reset();
-                            if let Ok(entries) = std::fs::read_dir(folder_path) {
-                                for entry in entries.flatten() {
-                                    let path = entry.path();
-                                    if path.is_file() {
-                                        let file_name_lower = path.file_name()
-                                            .and_then(|n| n.to_str())
-                                            .map(|s| s.to_lowercase())
-                                            .unwrap_or_default();
-                                        
-                                        if file_name_lower.contains("basecolor") || 
-                                           file_name_lower.contains("base_color") ||
-                                           file_name_lower.contains("diffuse") ||
-                                           file_name_lower.contains("albedo") {
-                                            render_state.app_state.loaded_textures.base_color = true;
-                                        } else if file_name_lower.contains("normal") {
-                                            render_state.app_state.loaded_textures.normal = true;
-                                        } else if file_name_lower.contains("metallic") && file_name_lower.contains("roughness") {
-                                            render_state.app_state.loaded_textures.metallic = true;
-                                            render_state.app_state.loaded_textures.roughness = true;
-                                        } else if file_name_lower.contains("orm") ||
-                                                  (file_name_lower.contains("ao") && file_name_lower.contains("roughness") && file_name_lower.contains("metallic")) {
-                                            render_state.app_state.loaded_textures.orm = true;
-                                            render_state.app_state.loaded_textures.metallic = true;
-                                            render_state.app_state.loaded_textures.roughness = true;
-                                            render_state.app_state.loaded_textures.ao = true;
-                                        } else if file_name_lower.contains("roughness") || file_name_lower.contains("rough") {
-                                            render_state.app_state.loaded_textures.roughness = true;
-                                        } else if file_name_lower.contains("metallic") || file_name_lower.contains("metal") {
-                                            render_state.app_state.loaded_textures.metallic = true;
-                                        } else if file_name_lower.contains("ao") || file_name_lower.contains("occlusion") {
-                                            render_state.app_state.loaded_textures.ao = true;
-                                        } else if file_name_lower.contains("emissive") || file_name_lower.contains("emission") {
-                                            render_state.app_state.loaded_textures.emissive = true;
-                                        } else if file_name_lower.contains("height") || file_name_lower.contains("displacement") {
-                                            render_state.app_state.loaded_textures.height = true;
-                                        }
-                                    }
+                    if let Ok(detected) = detect_textures_in_directory(std::path::Path::new(folder_path)) {
+                        // Use detected paths, but individual selections override folder detection
+                        texture_paths = detected;
+                    }
+                }
+                
+                // Override with individually selected textures
+                if let Some(ref path) = render_state.app_state.texture_handles.base_color {
+                    texture_paths.base_color = Some(std::path::PathBuf::from(path));
+                }
+                if let Some(ref path) = render_state.app_state.texture_handles.normal {
+                    texture_paths.normal = Some(std::path::PathBuf::from(path));
+                }
+                if let Some(ref path) = render_state.app_state.texture_handles.metallic {
+                    texture_paths.metallic = Some(std::path::PathBuf::from(path));
+                }
+                if let Some(ref path) = render_state.app_state.texture_handles.roughness {
+                    texture_paths.roughness = Some(std::path::PathBuf::from(path));
+                }
+                if let Some(ref path) = render_state.app_state.texture_handles.orm {
+                    texture_paths.orm = Some(std::path::PathBuf::from(path));
+                }
+                if let Some(ref path) = render_state.app_state.texture_handles.ao {
+                    texture_paths.ao = Some(std::path::PathBuf::from(path));
+                }
+                if let Some(ref path) = render_state.app_state.texture_handles.emissive {
+                    texture_paths.emissive = Some(std::path::PathBuf::from(path));
+                }
+                if let Some(ref path) = render_state.app_state.texture_handles.height {
+                    texture_paths.height = Some(std::path::PathBuf::from(path));
+                }
+                
+                // Load textures from paths
+                match TextureLoader::load_from_paths(
+                    &renderer.device,
+                    &renderer.queue,
+                    &texture_paths,
+                ) {
+                    Ok(new_texture_set) => {
+                        // Update texture bind group
+                        let texture_bind_group_layout = TextureSet::bind_group_layout(&renderer.device);
+                        render_state.texture_bind_group = new_texture_set.create_bind_group(
+                            &renderer.device,
+                            &texture_bind_group_layout,
+                        );
+                        
+                        // Update loaded texture status based on what we actually loaded
+                        render_state.app_state.loaded_textures.reset();
+                        render_state.app_state.loaded_textures.base_color = texture_paths.base_color.is_some();
+                        render_state.app_state.loaded_textures.normal = texture_paths.normal.is_some();
+                        render_state.app_state.loaded_textures.metallic = texture_paths.metallic.is_some();
+                        render_state.app_state.loaded_textures.roughness = texture_paths.roughness.is_some();
+                        render_state.app_state.loaded_textures.orm = texture_paths.orm.is_some();
+                        render_state.app_state.loaded_textures.ao = texture_paths.ao.is_some();
+                        render_state.app_state.loaded_textures.emissive = texture_paths.emissive.is_some();
+                        render_state.app_state.loaded_textures.height = texture_paths.height.is_some();
+                        
+                        // Also update texture_handles with detected paths from folder
+                        if let Some(ref folder_path) = render_state.app_state.texture_folder {
+                            if let Ok(detected) = detect_textures_in_directory(std::path::Path::new(folder_path)) {
+                                if detected.base_color.is_some() && render_state.app_state.texture_handles.base_color.is_none() {
+                                    render_state.app_state.texture_handles.base_color = detected.base_color.as_ref().and_then(|p| p.to_str().map(|s| s.to_string()));
+                                }
+                                if detected.normal.is_some() && render_state.app_state.texture_handles.normal.is_none() {
+                                    render_state.app_state.texture_handles.normal = detected.normal.as_ref().and_then(|p| p.to_str().map(|s| s.to_string()));
+                                }
+                                if detected.metallic.is_some() && render_state.app_state.texture_handles.metallic.is_none() {
+                                    render_state.app_state.texture_handles.metallic = detected.metallic.as_ref().and_then(|p| p.to_str().map(|s| s.to_string()));
+                                }
+                                if detected.roughness.is_some() && render_state.app_state.texture_handles.roughness.is_none() {
+                                    render_state.app_state.texture_handles.roughness = detected.roughness.as_ref().and_then(|p| p.to_str().map(|s| s.to_string()));
+                                }
+                                if detected.orm.is_some() && render_state.app_state.texture_handles.orm.is_none() {
+                                    render_state.app_state.texture_handles.orm = detected.orm.as_ref().and_then(|p| p.to_str().map(|s| s.to_string()));
+                                }
+                                if detected.ao.is_some() && render_state.app_state.texture_handles.ao.is_none() {
+                                    render_state.app_state.texture_handles.ao = detected.ao.as_ref().and_then(|p| p.to_str().map(|s| s.to_string()));
+                                }
+                                if detected.emissive.is_some() && render_state.app_state.texture_handles.emissive.is_none() {
+                                    render_state.app_state.texture_handles.emissive = detected.emissive.as_ref().and_then(|p| p.to_str().map(|s| s.to_string()));
+                                }
+                                if detected.height.is_some() && render_state.app_state.texture_handles.height.is_none() {
+                                    render_state.app_state.texture_handles.height = detected.height.as_ref().and_then(|p| p.to_str().map(|s| s.to_string()));
                                 }
                             }
-                            
-                            // Trigger material update to refresh view mode
-                            render_state.app_state.material_changed = true;
-                            
-                            log::info!("Textures loaded from: {}", folder_path);
                         }
-                        Err(e) => {
-                            log::error!("Failed to load textures from {}: {}", folder_path, e);
-                        }
+                        
+                        // Trigger material update to refresh view mode
+                        render_state.app_state.material_changed = true;
+                        
+                        log::info!("Textures loaded successfully");
+                    }
+                    Err(e) => {
+                        log::error!("Failed to load textures: {}", e);
                     }
                 }
                 render_state.app_state.textures_need_reload = false;
