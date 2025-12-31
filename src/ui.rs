@@ -4,7 +4,7 @@ use bevy::prelude::*;
 use bevy::input::mouse::MouseMotion;
 use bevy_egui::{egui, EguiContexts};
 use crate::mesh::MeshType;
-use crate::state::{AppState, ViewMode};
+use crate::state::{AppState, ViewMode, TessellationDebugMode};
 
 /// Build the egui UI
 pub fn ui_system(
@@ -279,6 +279,102 @@ pub fn ui_system(
                     state.material_changed = true;
                 }
                 ui.label(egui::RichText::new("Tip: Adjust to tile/scale textures on the model").weak().small());
+
+                ui.add_space(16.0);
+                ui.separator();
+
+                // ─────────────────────────────────────────────────────────────
+                // GPU Tessellation & Displacement
+                // ─────────────────────────────────────────────────────────────
+                ui.add_space(12.0);
+                ui.heading(egui::RichText::new("🔷 GPU Tessellation").size(16.0));
+                
+                if ui.checkbox(&mut state.gpu_tessellation.enabled, "Enable GPU Tessellation").changed() {
+                    state.material_changed = true;
+                }
+                ui.label(egui::RichText::new("Note: Requires DX12/Vulkan with tessellation support").weak().small());
+                
+                if state.gpu_tessellation.enabled {
+                    ui.add_space(8.0);
+                    
+                    // Tessellation factors
+                    ui.label("Min Tessellation Factor");
+                    if ui.add(egui::Slider::new(&mut state.gpu_tessellation.min_tess_factor, 1.0..=16.0)).changed() {
+                        state.material_changed = true;
+                    }
+                    
+                    ui.label("Max Tessellation Factor");
+                    if ui.add(egui::Slider::new(&mut state.gpu_tessellation.max_tess_factor, 1.0..=128.0)).changed() {
+                        state.material_changed = true;
+                    }
+                    
+                    ui.label("Quality Cap");
+                    if ui.add(egui::Slider::new(&mut state.gpu_tessellation.quality_cap, 1.0..=128.0)).changed() {
+                        state.material_changed = true;
+                    }
+                    
+                    ui.add_space(8.0);
+                    ui.separator();
+                    ui.add_space(8.0);
+                    
+                    // Displacement parameters
+                    ui.heading(egui::RichText::new("Displacement").size(14.0));
+                    
+                    ui.label("Displacement Scale");
+                    if ui.add(egui::Slider::new(&mut state.gpu_tessellation.displacement_scale, 0.0..=1.0)).changed() {
+                        state.material_changed = true;
+                    }
+                    
+                    ui.label("Displacement Midpoint");
+                    if ui.add(egui::Slider::new(&mut state.gpu_tessellation.displacement_midpoint, 0.0..=1.0)).changed() {
+                        state.material_changed = true;
+                    }
+                    
+                    ui.label("Displacement Bias");
+                    if ui.add(egui::Slider::new(&mut state.gpu_tessellation.displacement_bias, -1.0..=1.0)).changed() {
+                        state.material_changed = true;
+                    }
+                    
+                    ui.label("Clamp Min");
+                    if ui.add(egui::Slider::new(&mut state.gpu_tessellation.displacement_clamp_min, -2.0..=0.0)).changed() {
+                        state.material_changed = true;
+                    }
+                    
+                    ui.label("Clamp Max");
+                    if ui.add(egui::Slider::new(&mut state.gpu_tessellation.displacement_clamp_max, 0.0..=2.0)).changed() {
+                        state.material_changed = true;
+                    }
+                    
+                    ui.add_space(8.0);
+                    ui.separator();
+                    ui.add_space(8.0);
+                    
+                    // Tessellation quality settings
+                    ui.heading(egui::RichText::new("Quality Settings").size(14.0));
+                    
+                    ui.label("Screen Space Scale");
+                    if ui.add(egui::Slider::new(&mut state.gpu_tessellation.screen_space_scale, 10.0..=500.0).logarithmic(true)).changed() {
+                        state.material_changed = true;
+                    }
+                    
+                    ui.label("Distance Scale");
+                    if ui.add(egui::Slider::new(&mut state.gpu_tessellation.distance_scale, 0.01..=1.0).logarithmic(true)).changed() {
+                        state.material_changed = true;
+                    }
+                    
+                    ui.add_space(8.0);
+                    ui.separator();
+                    ui.add_space(8.0);
+                    
+                    // Debug visualization
+                    ui.heading(egui::RichText::new("Debug Visualization").size(14.0));
+                    ui.horizontal(|ui| {
+                        ui.selectable_value(&mut state.gpu_tessellation.debug_visualization, TessellationDebugMode::None, "None");
+                        ui.selectable_value(&mut state.gpu_tessellation.debug_visualization, TessellationDebugMode::TessellationDensity, "Tess Density");
+                        ui.selectable_value(&mut state.gpu_tessellation.debug_visualization, TessellationDebugMode::Wireframe, "Wireframe");
+                        ui.selectable_value(&mut state.gpu_tessellation.debug_visualization, TessellationDebugMode::DisplacementOnly, "Displacement");
+                    });
+                }
 
                 ui.add_space(16.0);
                 ui.separator();

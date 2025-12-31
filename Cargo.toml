@@ -2,26 +2,42 @@
 name = "pbr-view"
 version = "0.1.0"
 edition = "2021"
-description = "PBR Texture Set Viewer with Bevy and egui"
+description = "PBR Texture Set Viewer with wgpu and egui"
 authors = ["PBR Viewer"]
 
 [dependencies]
-# Game engine with PBR support
-bevy = { version = "0.14", features = ["dynamic_linking"] }
+# Graphics rendering
+wgpu = "0.20"
+winit = "0.29"
+pollster = "0.3"
+raw-window-handle = "0.6"
 
 # UI
-bevy_egui = "0.29"
 egui = "0.28"
+egui-wgpu = "0.28"
+egui-winit = "0.28"
+epaint = "0.28"
 
 # File dialog
 rfd = "0.14"
 
-# Logging
-log = "0.4"
+# Image loading
+image = "0.25"
+
+# Math
+glam = "0.27"
+bytemuck = { version = "1.14", features = ["derive"] }
 
 # Error handling
 anyhow = "1.0"
 thiserror = "1.0"
+
+# Logging
+log = "0.4"
+env_logger = "0.11"
+
+# Async runtime (for wgpu)
+futures = "0.3"
 
 [profile.release]
 opt-level = 3
@@ -32,3 +48,4 @@ opt-level = 1
 
 [profile.dev.package."*"]
 opt-level = 3
+

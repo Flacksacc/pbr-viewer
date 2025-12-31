@@ -1,579 +1,361 @@
-//! PBR Texture Set Viewer
-//!
-//! A utility application to visualize PBR texture sets on various mesh primitives.
+//! PBR Texture Set Viewer - wgpu version
 
-mod camera;
-mod mesh;
-mod state;
-mod ui;
+mod renderer;
+mod camera_wgpu;
+mod mesh_wgpu;
+mod state_wgpu;
+mod texture;
+mod shader;
+mod pipeline;
+mod mesh_buffer;
+mod texture_manager;
+mod texture_loader;
+mod input;
+mod ui_wgpu;
+mod egui_integration;
 
-use bevy::prelude::*;
-use bevy::gltf::Gltf;
-use bevy_egui::EguiPlugin;
-use camera::{OrbitCameraController, OrbitCameraPlugin};
-use mesh::MeshType;
-use state::{AppState, ViewMode};
-use std::path::PathBuf;
+// Re-export for convenience
+pub use mesh_wgpu::MeshType;
+pub use state_wgpu::{AppState, ViewMode, TessellationDebugMode};
 
-fn main() {
-    App::new()
-        .add_plugins(DefaultPlugins
-            .set(WindowPlugin {
-                primary_window: Some(Window {
-                    title: "PBR Texture Viewer".to_string(),
-                    resolution: (1600.0, 900.0).into(),
-                    ..default()
-                }),
-                ..default()
-            })
-            .set(bevy::render::RenderPlugin {
-                render_creation: bevy::render::settings::RenderCreation::Automatic(
-                    bevy::render::settings::WgpuSettings {
-                        backends: Some(bevy::render::settings::Backends::VULKAN),
-                        ..default()
-                    }
-                ),
-                ..default()
-            })
-        )
-        .add_plugins(EguiPlugin)
-        .add_plugins(OrbitCameraPlugin)
-        .init_resource::<AppState>()
-        .add_systems(Startup, (setup_scene, log_startup_info))
-        .add_systems(Update, (
-            ui::ui_system,
-            handle_mesh_change,
-            load_custom_model,
-            spawn_custom_model,
-            load_textures,
-            apply_material,
-            handle_light_update,
-            handle_dropped_files,
-            update_model_rotation,
-        ))
-        .run();
+use winit::{
+    event::{Event, WindowEvent},
+    event_loop::{ControlFlow, EventLoop},
+    window::{Window, WindowBuilder},
+};
+use renderer::Renderer;
+use state_wgpu::AppState as WgpuAppState;
+use camera_wgpu::{OrbitCamera, Camera};
+use pipeline::RenderPipeline;
+use mesh_wgpu::create_sphere;
+use mesh_buffer::MeshBuffer;
+use texture_manager::TextureSet;
+use shader::load_shader_from_str;
+use glam::Mat4;
+use input::InputState;
+use egui_integration::EguiState;
+use ui_wgpu::build_ui;
+
+// Embed shader source
+const PBR_SHADER: &str = include_str!("../assets/shaders/pbr.wgsl");
+
+// Store render state
+struct RenderState {
+    render_pipeline: RenderPipeline,
+    texture_bind_group: wgpu::BindGroup,
+    mesh_buffer: MeshBuffer,
+    orbit_camera: OrbitCamera,
+    app_state: WgpuAppState,
+    camera: Camera,
+    input_state: InputState,
+    egui_state: EguiState,
 }
 
-fn log_startup_info() {
-    info!("==============================================");
-    info!("PBR Texture Viewer started!");
-    info!("Drag and drop textures/folders onto the window");
-    info!("==============================================");
-}
-
-/// Marker component for the main model
-#[derive(Component)]
-pub struct MainModel;
-
-/// Marker component for the directional light
-#[derive(Component)]
-pub struct MainLight;
-
-/// Set up the initial scene
-fn setup_scene(
-    mut commands: Commands,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
-    mut state: ResMut<AppState>,
-) {
-    // Create default sphere mesh
-    let mesh_handle = meshes.add(mesh::create_sphere(state.tessellation_level));
-    state.mesh_handle = Some(mesh_handle.clone());
-
-    // Create default material
-    let material = StandardMaterial {
-        base_color: Color::srgb(0.8, 0.8, 0.8),
-        metallic: 0.0,
-        perceptual_roughness: 0.5,
-        ..default()
-    };
-    let material_handle = materials.add(material);
-    state.material_handle = Some(material_handle.clone());
-
-    // Spawn the main model
-    commands.spawn((
-        PbrBundle {
-            mesh: mesh_handle,
-            material: material_handle,
-            transform: Transform::IDENTITY,
-            ..default()
-        },
-        MainModel,
-    ));
-
-    // Create camera
-    commands.spawn((
-        Camera3dBundle {
-            transform: Transform::from_xyz(0.0, 1.0, 3.0).looking_at(Vec3::ZERO, Vec3::Y),
-            ..default()
-        },
-        OrbitCameraController::default(),
-    ));
-
-    // Create directional light
-    commands.spawn((
-        DirectionalLightBundle {
-            directional_light: DirectionalLight {
-                color: Color::WHITE,
-                illuminance: 15000.0,
-                shadows_enabled: true,
-                ..default()
-            },
-            transform: Transform::from_xyz(4.0, 8.0, 4.0).looking_at(Vec3::ZERO, Vec3::Y),
-            ..default()
-        },
-        MainLight,
-    ));
-
-    // Add ambient light
-    commands.insert_resource(AmbientLight {
-        color: Color::WHITE,
-        brightness: 200.0,
-    });
-}
-
-/// Handle mesh type changes
-fn handle_mesh_change(
-    mut state: ResMut<AppState>,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut query: Query<&mut Handle<Mesh>, With<MainModel>>,
-) {
-    if !state.mesh_changed {
-        return;
-    }
+fn main() -> Result<(), anyhow::Error> {
+    env_logger::init();
+    log::info!("PBR Texture Viewer started!");
     
-    // Skip if using custom model - that's handled by spawn_custom_model
-    if state.using_custom_model {
-        state.mesh_changed = false;
-        return;
-    }
+    let event_loop = EventLoop::new()?;
+    let window = WindowBuilder::new()
+        .with_title("PBR Texture Viewer")
+        .with_inner_size(winit::dpi::LogicalSize::new(1600.0, 900.0))
+        .build(&event_loop)?;
     
-    state.mesh_changed = false;
-
-    let new_mesh = match state.current_mesh {
-        MeshType::Sphere => mesh::create_sphere(state.tessellation_level),
-        MeshType::Cube => mesh::create_cube(),
-        MeshType::Plane => mesh::create_plane(state.tessellation_level),
-        MeshType::RoundedRect => mesh::create_rounded_rect(state.tessellation_level, 0.2),
-        MeshType::Custom => return, // Handled by spawn_custom_model
-    };
-
-    let mesh_handle = meshes.add(new_mesh);
-    state.mesh_handle = Some(mesh_handle.clone());
-
-    for mut handle in query.iter_mut() {
-        *handle = mesh_handle.clone();
-    }
-}
-
-/// Load textures from folder (only when folder changes)
-fn load_textures(
-    mut state: ResMut<AppState>,
-    asset_server: Res<AssetServer>,
-) {
-    if !state.textures_need_reload {
-        return;
-    }
-    state.textures_need_reload = false;
+    let window_ref = &window; // Store reference for closure
     
-    // Reset texture handles
-    state.texture_handles = state::TextureHandles::default();
-    state.loaded_textures.reset();
+    let mut renderer = pollster::block_on(async {
+        Renderer::new(window_ref).await
+    })?;
     
-    // Clone folder to avoid borrow issues
-    let folder_opt = state.texture_folder.clone();
+    // Initialize egui
+    let mut egui_state = EguiState::new(
+        &renderer.device,
+        &renderer.config,
+        window_ref,
+    );
     
-    if let Some(folder) = folder_opt {
-        let folder_path = PathBuf::from(&folder);
-        
-        // Base color texture
-        if let Some(path) = find_texture_in_folder(&folder_path, &["basecolor", "albedo", "diffuse", "color", "base"]) {
-            state.texture_handles.base_color = Some(asset_server.load(path));
-            state.loaded_textures.base_color = true;
-        }
-        
-        // Normal map
-        if let Some(path) = find_texture_in_folder(&folder_path, &["normal", "normalmap", "nrm", "nor"]) {
-            state.texture_handles.normal = Some(asset_server.load(path));
-            state.loaded_textures.normal = true;
-        }
-        
-        // Roughness (separate)
-        if let Some(path) = find_texture_in_folder(&folder_path, &["roughness", "rough", "rgh"]) {
-            state.texture_handles.roughness = Some(asset_server.load(path));
-            state.loaded_textures.roughness = true;
-        }
-        
-        // Metallic (separate)
-        if let Some(path) = find_texture_in_folder(&folder_path, &["metallic", "metal", "metalness", "met"]) {
-            state.texture_handles.metallic = Some(asset_server.load(path));
-            state.loaded_textures.metallic = true;
-        }
-        
-        // ORM (combined AO/Roughness/Metallic)
-        if let Some(path) = find_texture_in_folder(&folder_path, &["orm", "arm", "rma", "metallic_roughness"]) {
-            state.texture_handles.orm = Some(asset_server.load(path));
-            state.loaded_textures.orm = true;
-        }
-        
-        // Ambient Occlusion (separate)
-        if let Some(path) = find_texture_in_folder(&folder_path, &["ao", "occlusion", "ambient_occlusion", "ambientocclusion"]) {
-            state.texture_handles.ao = Some(asset_server.load(path));
-            state.loaded_textures.ao = true;
-        }
-        
-        // Emissive
-        if let Some(path) = find_texture_in_folder(&folder_path, &["emissive", "emission", "emit", "glow"]) {
-            state.texture_handles.emissive = Some(asset_server.load(path));
-            state.loaded_textures.emissive = true;
-        }
-        
-        // Height/Displacement
-        if let Some(path) = find_texture_in_folder(&folder_path, &["height", "displacement", "disp", "bump", "depth"]) {
-            state.texture_handles.height = Some(asset_server.load(path));
-            state.loaded_textures.height = true;
-        }
-        
-        info!("Loaded textures from: {}", folder);
-    }
+    // Create shader
+    let shader = load_shader_from_str(&renderer.device, PBR_SHADER, Some("pbr_shader"));
     
-    // Trigger material update after loading textures
-    state.material_changed = true;
-}
-
-/// Apply material based on current state and view mode
-fn apply_material(
-    mut state: ResMut<AppState>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
-    query: Query<&Handle<StandardMaterial>, With<MainModel>>,
-) {
-    if !state.material_changed {
-        return;
-    }
-    state.material_changed = false;
-
-    for handle in query.iter() {
-        if let Some(material) = materials.get_mut(handle) {
-            let params = &state.material_params;
-            let tex = &state.texture_handles;
-            
-            // Reset material to defaults first
-            *material = StandardMaterial::default();
-            
-            // Apply UV scale transform to all textures
-            let uv_scale = params.uv_scale;
-            material.uv_transform = bevy::math::Affine2::from_scale(Vec2::splat(uv_scale));
-            
-            match state.view_mode {
-                ViewMode::Lit => {
-                    // Full PBR rendering
-                    let tint = params.base_color_tint;
-                    material.base_color = Color::srgb(tint[0], tint[1], tint[2]);
-                    material.base_color_texture = tex.base_color.clone();
-                    material.normal_map_texture = tex.normal.clone();
-                    material.metallic = params.metallic_multiplier;
-                    material.perceptual_roughness = params.roughness_multiplier;
-                    
-                    // Use ORM if available, otherwise use separate textures
-                    if tex.orm.is_some() {
-                        material.metallic_roughness_texture = tex.orm.clone();
-                        material.metallic = 1.0; // Let texture control it
-                        material.perceptual_roughness = 1.0;
-                    }
-                    
-                    material.occlusion_texture = tex.ao.clone();
-                    material.emissive_texture = tex.emissive.clone();
-                    material.emissive = LinearRgba::rgb(
-                        params.emissive_strength,
-                        params.emissive_strength,
-                        params.emissive_strength,
-                    );
-                    
-                    // Parallax/displacement
-                    if tex.height.is_some() {
-                        material.depth_map = tex.height.clone();
-                        material.parallax_depth_scale = params.displacement_strength;
-                        material.parallax_mapping_method = bevy::pbr::ParallaxMappingMethod::Relief { max_steps: 8 };
-                    }
-                    
-                    material.unlit = false;
-                }
-                
-                ViewMode::BaseColor => {
-                    // Show only base color texture
-                    material.base_color = Color::WHITE;
-                    material.base_color_texture = tex.base_color.clone();
-                    material.unlit = true;
-                }
-                
-                ViewMode::Normals => {
-                    // Show normal map as color (displayed on model)
-                    material.base_color = Color::WHITE;
-                    material.base_color_texture = tex.normal.clone();
-                    material.unlit = true;
-                }
-                
-                ViewMode::Roughness => {
-                    // Show roughness texture
-                    material.base_color = Color::WHITE;
-                    // Use separate roughness if available, otherwise use ORM
-                    if tex.roughness.is_some() {
-                        material.base_color_texture = tex.roughness.clone();
-                    } else if tex.orm.is_some() {
-                        // ORM stores roughness in G channel - we show whole texture
-                        material.base_color_texture = tex.orm.clone();
-                    }
-                    material.unlit = true;
-                }
-                
-                ViewMode::Metallic => {
-                    // Show metallic texture
-                    material.base_color = Color::WHITE;
-                    if tex.metallic.is_some() {
-                        material.base_color_texture = tex.metallic.clone();
-                    } else if tex.orm.is_some() {
-                        // ORM stores metallic in B channel - we show whole texture
-                        material.base_color_texture = tex.orm.clone();
-                    }
-                    material.unlit = true;
-                }
-                
-                ViewMode::AO => {
-                    // Show AO texture
-                    material.base_color = Color::WHITE;
-                    if tex.ao.is_some() {
-                        material.base_color_texture = tex.ao.clone();
-                    } else if tex.orm.is_some() {
-                        // ORM stores AO in R channel - we show whole texture
-                        material.base_color_texture = tex.orm.clone();
-                    }
-                    material.unlit = true;
-                }
-                
-                ViewMode::Emissive => {
-                    // Show emissive texture
-                    material.base_color = Color::WHITE;
-                    material.base_color_texture = tex.emissive.clone();
-                    material.unlit = true;
-                }
-                
-                ViewMode::Height => {
-                    // Show height/displacement texture
-                    material.base_color = Color::WHITE;
-                    material.base_color_texture = tex.height.clone();
-                    material.unlit = true;
-                }
-            }
-        }
-    }
-}
-
-/// Load custom GLTF/GLB model
-fn load_custom_model(
-    mut state: ResMut<AppState>,
-    asset_server: Res<AssetServer>,
-) {
-    if !state.custom_model_needs_load {
-        return;
-    }
+    // Create render pipeline
+    let mut render_pipeline = RenderPipeline::new(
+        &renderer.device,
+        &shader,
+        renderer.config.format,
+    )?;
     
-    if let Some(ref path) = state.custom_model_path {
-        info!("Loading custom model: {}", path);
-        let handle: Handle<Gltf> = asset_server.load(path.clone());
-        state.custom_model_handle = Some(handle);
-        state.custom_model_needs_load = false;
-    }
-}
-
-/// Marker for custom model scene root
-#[derive(Component)]
-pub struct CustomModelRoot;
-
-/// Spawn the custom model once loaded
-fn spawn_custom_model(
-    mut commands: Commands,
-    mut state: ResMut<AppState>,
-    gltf_assets: Res<Assets<Gltf>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
-    main_model_query: Query<Entity, With<MainModel>>,
-    custom_model_query: Query<Entity, With<CustomModelRoot>>,
-) {
-    // Only process if we have a custom model handle and want to use it
-    if !state.using_custom_model {
-        // If we switched away from custom model, clean up custom model entities
-        for entity in custom_model_query.iter() {
-            commands.entity(entity).despawn_recursive();
-        }
-        return;
-    }
+    // Create placeholder textures
+    let texture_set = TextureSet::create_placeholder(&renderer.device, &renderer.queue);
+    let texture_bind_group_layout = TextureSet::bind_group_layout(&renderer.device);
+    let texture_bind_group = texture_set.create_bind_group(&renderer.device, &texture_bind_group_layout);
     
-    let Some(ref gltf_handle) = state.custom_model_handle else {
-        return;
+    // Create mesh
+    let mesh_data = create_sphere(32);
+    let mesh_buffer = MeshBuffer::new(&renderer.device, &mesh_data);
+    
+    // Camera setup
+    let mut orbit_camera = OrbitCamera::new(glam::Vec3::ZERO, 3.0);
+    let aspect = renderer.size.width as f32 / renderer.size.height as f32;
+    let camera = orbit_camera.to_camera_with_aspect(aspect);
+    render_pipeline.update_camera(&renderer.queue, &camera);
+    
+    // Model transform
+    let model_matrix = Mat4::IDENTITY;
+    render_pipeline.update_model(&renderer.queue, model_matrix);
+    
+    // Material params
+    let mut app_state = WgpuAppState::default();
+    render_pipeline.update_material(&renderer.queue, &app_state.material_params);
+    
+    let mut render_state = RenderState {
+        render_pipeline,
+        texture_bind_group,
+        mesh_buffer,
+        orbit_camera,
+        app_state,
+        camera,
+        input_state: InputState::new(),
+        egui_state,
     };
     
-    // Check if GLTF is loaded
-    let Some(gltf) = gltf_assets.get(gltf_handle) else {
-        return; // Not loaded yet
-    };
-    
-    // Check if we already spawned this model
-    if !custom_model_query.is_empty() {
-        return;
-    }
-    
-    info!("Spawning custom model");
-    
-    // Remove existing main model (the primitive)
-    for entity in main_model_query.iter() {
-        commands.entity(entity).despawn_recursive();
-    }
-    
-    // Create new material for the custom model
-    let material = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.8, 0.8, 0.8),
-        ..default()
-    });
-    state.material_handle = Some(material);
-    
-    // Spawn the GLTF scene
-    if let Some(scene_handle) = gltf.scenes.first() {
-        commands.spawn((
-            SceneBundle {
-                scene: scene_handle.clone(),
-                ..default()
-            },
-            CustomModelRoot,
-            MainModel,
-        ));
-    }
-    
-    state.material_changed = true;
-}
-
-/// Find a texture file in a folder matching any of the patterns
-fn find_texture_in_folder(folder: &PathBuf, patterns: &[&str]) -> Option<PathBuf> {
-    let extensions = ["png", "jpg", "jpeg", "tga", "bmp", "tiff"];
-    
-    if let Ok(entries) = std::fs::read_dir(folder) {
-        for entry in entries.filter_map(|e| e.ok()) {
-            let path = entry.path();
-            if !path.is_file() {
-                continue;
-            }
-            
-            let file_name = path.file_stem()
-                .and_then(|s| s.to_str())
-                .unwrap_or("")
-                .to_lowercase();
-            
-            let extension = path.extension()
-                .and_then(|s| s.to_str())
-                .unwrap_or("")
-                .to_lowercase();
-            
-            if !extensions.contains(&extension.as_str()) {
-                continue;
-            }
-            
-            for pattern in patterns {
-                if file_name.contains(pattern) {
-                    return Some(path);
-                }
-            }
-        }
-    }
-    
-    None
-}
-
-/// Handle light parameter updates
-fn handle_light_update(
-    state: Res<AppState>,
-    mut lights: Query<(&mut DirectionalLight, &mut Transform), With<MainLight>>,
-    mut ambient: ResMut<AmbientLight>,
-) {
-    for (mut light, mut transform) in lights.iter_mut() {
-        let dir = state.light_params.direction;
-        let color = state.light_params.color;
+    event_loop.run(move |event, elwt| {
+        elwt.set_control_flow(ControlFlow::Poll);
         
-        light.color = Color::srgb(color[0], color[1], color[2]);
-        light.illuminance = state.light_params.intensity * 1000.0;
-        
-        // Point light in the direction specified
-        *transform = Transform::from_xyz(-dir.x * 10.0, -dir.y * 10.0, -dir.z * 10.0)
-            .looking_at(Vec3::ZERO, Vec3::Y);
-    }
-    
-    ambient.brightness = state.light_params.ambient_intensity * 500.0;
-}
-
-/// Handle drag and drop of files/folders
-fn handle_dropped_files(
-    mut state: ResMut<AppState>,
-    mut events: EventReader<bevy::window::FileDragAndDrop>,
-) {
-    let texture_extensions = ["png", "jpg", "jpeg", "tga", "bmp", "tiff", "exr", "hdr"];
-    let model_extensions = ["gltf", "glb", "obj"];
-    
-    for event in events.read() {
-        info!("Drag event received: {:?}", event);
         match event {
-            bevy::window::FileDragAndDrop::DroppedFile { path_buf, .. } => {
-                info!("File dropped: {:?}", path_buf);
+            Event::WindowEvent { event, .. } => {
+                // Pass events to egui FIRST - this is critical for UI interaction
+                let egui_consumed = render_state.egui_state.handle_event(&window, &event);
                 
-                // Clear hover state
-                state.drag_hover_path = None;
-                
-                // Check file extension
-                let ext = path_buf.extension()
-                    .and_then(|ext| ext.to_str())
-                    .map(|ext| ext.to_lowercase())
-                    .unwrap_or_default();
-                
-                let is_texture = texture_extensions.contains(&ext.as_str());
-                let is_model = model_extensions.contains(&ext.as_str());
-                
-                if is_model {
-                    // Load as custom model
-                    state.custom_model_path = Some(path_buf.to_string_lossy().to_string());
-                    state.custom_model_needs_load = true;
-                    state.using_custom_model = true;
-                    state.current_mesh = mesh::MeshType::Custom;
-                    state.mesh_changed = true;
-                    info!("Loading custom model: {:?}", path_buf);
-                } else if is_texture || path_buf.is_dir() {
-                    // Load texture folder
-                    let folder = if path_buf.is_file() {
-                        path_buf.parent().map(|p| p.to_path_buf())
-                    } else {
-                        Some(path_buf.clone())
-                    };
-                    
-                    if let Some(folder_path) = folder {
-                        state.texture_folder = Some(folder_path.to_string_lossy().to_string());
-                        state.textures_need_reload = true;
-                        info!("Loading texture set from: {:?}", folder_path);
-                    }
+                // Update input state only if egui didn't consume the event
+                if !egui_consumed {
+                    render_state.input_state.update_from_event(&event);
                 }
+                
+                match event {
+                    WindowEvent::CloseRequested => {
+                        elwt.exit();
+                    }
+                    WindowEvent::Resized(physical_size) => {
+                        renderer.resize(physical_size);
+                        // Update camera aspect
+                        render_state.camera.aspect = physical_size.width as f32 / physical_size.height as f32;
+                        render_state.render_pipeline.update_camera(&renderer.queue, &render_state.camera);
+                    }
+                    WindowEvent::RedrawRequested => {
+                        // Handle input for camera control (only if not over UI)
+                        let over_ui = render_state.egui_state.context.wants_pointer_input() || 
+                                     render_state.egui_state.context.is_pointer_over_area();
+                        if !over_ui {
+                            handle_camera_input(&mut render_state, &renderer.queue);
+                        }
+                        render_frame(&mut renderer, &mut render_state, &window);
+                    }
+                    _ => {}
+                }
+            },
+            Event::AboutToWait => {
+                window.request_redraw();
             }
-            bevy::window::FileDragAndDrop::HoveredFile { path_buf, .. } => {
-                info!("File hovering: {:?}", path_buf);
-                state.drag_hover_path = Some(path_buf.to_string_lossy().to_string());
-            }
-            bevy::window::FileDragAndDrop::HoveredFileCanceled { .. } => {
-                info!("Hover canceled");
-                state.drag_hover_path = None;
-            }
+            _ => {}
         }
-    }
+    })?;
+    
+    Ok(())
 }
 
-/// Update model rotation based on mouse input
-fn update_model_rotation(
-    state: Res<AppState>,
-    mut query: Query<&mut Transform, With<MainModel>>,
-) {
-    for mut transform in query.iter_mut() {
-        transform.rotation = state.model_rotation;
+fn handle_camera_input(render_state: &mut RenderState, queue: &wgpu::Queue) {
+    let input = &mut render_state.input_state;
+    
+    // Mouse rotation (right mouse button)
+    if input.right_mouse_pressed && input.mouse_delta.length_squared() > 0.0 {
+        let sensitivity = 0.005;
+        let delta_yaw = -input.mouse_delta.x * sensitivity;
+        let delta_pitch = -input.mouse_delta.y * sensitivity;
+        render_state.orbit_camera.rotate(delta_yaw, delta_pitch);
+    }
+    
+    // Scroll zoom
+    if input.scroll_delta.abs() > 0.0 {
+        let zoom_speed = 0.1;
+        render_state.orbit_camera.zoom(-input.scroll_delta * zoom_speed);
+    }
+    
+    // Update camera
+    render_state.camera = render_state.orbit_camera.to_camera_with_aspect(render_state.camera.aspect);
+    render_state.render_pipeline.update_camera(queue, &render_state.camera);
+    
+    // Reset frame input
+    input.reset_frame();
+}
+
+fn render_frame(renderer: &mut Renderer, render_state: &mut RenderState, window: &Window) {
+    match renderer.get_current_texture() {
+        Ok(frame) => {
+            let view = frame.texture.create_view(&wgpu::TextureViewDescriptor::default());
+            
+            // Begin egui frame
+            render_state.egui_state.begin_frame(window);
+            
+            // Build UI
+            build_ui(&render_state.egui_state.context, &mut render_state.app_state);
+            
+            // Handle texture loading if needed
+            if render_state.app_state.textures_need_reload {
+                if let Some(ref folder_path) = render_state.app_state.texture_folder {
+                    match crate::texture_loader::TextureLoader::load_from_directory(
+                        &renderer.device,
+                        &renderer.queue,
+                        std::path::Path::new(folder_path),
+                    ) {
+                        Ok(new_texture_set) => {
+                            // Update texture bind group
+                            let texture_bind_group_layout = TextureSet::bind_group_layout(&renderer.device);
+                            render_state.texture_bind_group = new_texture_set.create_bind_group(
+                                &renderer.device,
+                                &texture_bind_group_layout,
+                            );
+                            
+                            // Update loaded texture status
+                            render_state.app_state.loaded_textures.reset();
+                            // Check which textures were actually loaded
+                            // For now, we'll assume all are loaded if the folder was selected
+                            render_state.app_state.loaded_textures.base_color = true;
+                            render_state.app_state.loaded_textures.normal = true;
+                            render_state.app_state.loaded_textures.roughness = true;
+                            render_state.app_state.loaded_textures.metallic = true;
+                            
+                            log::info!("Textures loaded from: {}", folder_path);
+                        }
+                        Err(e) => {
+                            log::error!("Failed to load textures from {}: {}", folder_path, e);
+                        }
+                    }
+                }
+                render_state.app_state.textures_need_reload = false;
+            }
+            
+            // Update material if changed
+            if render_state.app_state.material_changed {
+                render_state.render_pipeline.update_material(
+                    &renderer.queue,
+                    &render_state.app_state.material_params,
+                );
+                render_state.app_state.material_changed = false;
+            }
+            
+            // End egui frame and get output
+            let egui_output = render_state.egui_state.end_frame(window);
+            let textures_delta = &egui_output.textures_delta;
+            
+            // Screen descriptor for egui rendering
+            let pixels_per_point = window.scale_factor() as f32;
+            let screen_descriptor = egui_wgpu::ScreenDescriptor {
+                size_in_pixels: [renderer.size.width, renderer.size.height],
+                pixels_per_point,
+            };
+            
+            // Tessellate shapes into primitives (this is the key conversion step)
+            let egui_primitives = render_state.egui_state.tessellate(egui_output.shapes, pixels_per_point);
+            
+            let mut encoder = renderer.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("Render Encoder"),
+            });
+            
+            if !textures_delta.is_empty() {
+                render_state.egui_state.update_texture(
+                    &renderer.device,
+                    &renderer.queue,
+                    textures_delta,
+                );
+            }
+            
+            // Render 3D scene
+            {
+                let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("Render Pass"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: &view,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(wgpu::Color {
+                                r: 0.1,
+                                g: 0.1,
+                                b: 0.1,
+                                a: 1.0,
+                            }),
+                            store: wgpu::StoreOp::Store,
+                        },
+                    })],
+                    depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                        view: &renderer.depth_texture_view,
+                        depth_ops: Some(wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(1.0),
+                            store: wgpu::StoreOp::Store,
+                        }),
+                        stencil_ops: None,
+                    }),
+                    occlusion_query_set: None,
+                    timestamp_writes: None,
+                });
+                
+                // Set render pipeline
+                render_pass.set_pipeline(&render_state.render_pipeline.pipeline);
+                
+                // Set bind groups
+                render_pass.set_bind_group(0, &render_state.render_pipeline.camera_bind_group, &[]);
+                render_pass.set_bind_group(1, &render_state.texture_bind_group, &[]);
+                render_pass.set_bind_group(2, &render_state.render_pipeline.material_bind_group, &[]);
+                
+                // Set vertex buffer
+                render_pass.set_vertex_buffer(0, render_state.mesh_buffer.vertex_buffer.slice(..));
+                
+                // Set index buffer and draw
+                render_pass.set_index_buffer(render_state.mesh_buffer.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+                render_pass.draw_indexed(0..render_state.mesh_buffer.index_count, 0, 0..1);
+            }
+            
+            // Update egui buffers
+            render_state.egui_state.update_buffers(
+                &renderer.device,
+                &renderer.queue,
+                &mut encoder,
+                &screen_descriptor,
+                &egui_primitives,
+            );
+            
+            // Render egui UI
+            {
+                let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("UI Render Pass"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: &view,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Load,
+                            store: wgpu::StoreOp::Store,
+                        },
+                    })],
+                    depth_stencil_attachment: None,
+                    occlusion_query_set: None,
+                    timestamp_writes: None,
+                });
+                
+                render_state.egui_state.render(
+                    &mut render_pass,
+                    &egui_primitives,
+                    &screen_descriptor,
+                );
+            }
+            
+            renderer.queue.submit(std::iter::once(encoder.finish()));
+            frame.present();
+        }
+        Err(wgpu::SurfaceError::Lost) => {
+            renderer.resize(renderer.size);
+        }
+        Err(wgpu::SurfaceError::OutOfMemory) => {
+            std::process::exit(1);
+        }
+        Err(e) => eprintln!("Surface error: {:?}", e),
     }
 }

@@ -1,9 +1,7 @@
-//! Application state and resources
+//! Application state without Bevy dependencies
 
-use bevy::prelude::*;
-use bevy::asset::Handle;
-use bevy::gltf::Gltf;
-use crate::mesh::MeshType;
+use glam::Quat;
+use crate::mesh_wgpu::MeshType;
 
 /// View modes for visualizing different texture channels
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -60,6 +58,21 @@ pub struct MaterialParams {
     pub uv_scale: f32,
 }
 
+impl Default for MaterialParams {
+    fn default() -> Self {
+        Self {
+            metallic_multiplier: 0.0,
+            roughness_multiplier: 0.5,
+            normal_strength: 1.0,
+            ao_strength: 1.0,
+            emissive_strength: 0.0,
+            displacement_strength: 0.1,
+            base_color_tint: [0.8, 0.8, 0.8],
+            uv_scale: 1.0,
+        }
+    }
+}
+
 /// GPU Tessellation parameters
 #[derive(Debug, Clone)]
 pub struct GpuTessellationParams {
@@ -80,7 +93,7 @@ pub struct GpuTessellationParams {
 impl Default for GpuTessellationParams {
     fn default() -> Self {
         Self {
-            enabled: true,
+            enabled: false,
             min_tess_factor: 1.0,
             max_tess_factor: 64.0,
             displacement_scale: 0.1,
@@ -105,25 +118,10 @@ pub enum TessellationDebugMode {
     DisplacementOnly,
 }
 
-impl Default for MaterialParams {
-    fn default() -> Self {
-        Self {
-            metallic_multiplier: 0.0,
-            roughness_multiplier: 0.5,
-            normal_strength: 1.0,
-            ao_strength: 1.0,
-            emissive_strength: 0.0,
-            displacement_strength: 0.1,
-            base_color_tint: [0.8, 0.8, 0.8],
-            uv_scale: 1.0,
-        }
-    }
-}
-
 /// Light parameters
 #[derive(Debug, Clone)]
 pub struct LightParams {
-    pub direction: Vec3,
+    pub direction: glam::Vec3,
     pub intensity: f32,
     pub color: [f32; 3],
     pub ambient_intensity: f32,
@@ -132,7 +130,7 @@ pub struct LightParams {
 impl Default for LightParams {
     fn default() -> Self {
         Self {
-            direction: Vec3::new(-1.0, -1.0, -1.0).normalize(),
+            direction: glam::Vec3::new(-1.0, -1.0, -1.0).normalize(),
             intensity: 15.0,
             color: [1.0, 1.0, 1.0],
             ambient_intensity: 0.4,
@@ -140,21 +138,39 @@ impl Default for LightParams {
     }
 }
 
-/// Stored texture handles for view mode switching
+/// Texture handles (using paths for now, will load into wgpu later)
 #[derive(Debug, Clone, Default)]
 pub struct TextureHandles {
-    pub base_color: Option<Handle<Image>>,
-    pub normal: Option<Handle<Image>>,
-    pub roughness: Option<Handle<Image>>,
-    pub metallic: Option<Handle<Image>>,
-    pub orm: Option<Handle<Image>>,
-    pub ao: Option<Handle<Image>>,
-    pub emissive: Option<Handle<Image>>,
-    pub height: Option<Handle<Image>>,
+    pub base_color: Option<String>,
+    pub normal: Option<String>,
+    pub roughness: Option<String>,
+    pub metallic: Option<String>,
+    pub orm: Option<String>,
+    pub ao: Option<String>,
+    pub emissive: Option<String>,
+    pub height: Option<String>,
 }
 
-/// Main application state resource
-#[derive(Resource)]
+/// Tracks which textures have been loaded
+#[derive(Debug, Clone, Default)]
+pub struct LoadedTextures {
+    pub base_color: bool,
+    pub normal: bool,
+    pub roughness: bool,
+    pub metallic: bool,
+    pub orm: bool,
+    pub ao: bool,
+    pub emissive: bool,
+    pub height: bool,
+}
+
+impl LoadedTextures {
+    pub fn reset(&mut self) {
+        *self = Self::default();
+    }
+}
+
+/// Main application state
 pub struct AppState {
     // Current settings
     pub current_mesh: MeshType,
@@ -171,10 +187,10 @@ pub struct AppState {
     // Texture folder
     pub texture_folder: Option<String>,
     
-    // Loaded texture info (booleans for UI)
+    // Loaded texture info
     pub loaded_textures: LoadedTextures,
     
-    // Actual texture handles
+    // Texture handles (paths)
     pub texture_handles: TextureHandles,
     
     // Model rotation
@@ -188,16 +204,6 @@ pub struct AppState {
     
     // Drag and drop hover state
     pub drag_hover_path: Option<String>,
-    
-    // Asset handles
-    pub mesh_handle: Option<Handle<Mesh>>,
-    pub material_handle: Option<Handle<StandardMaterial>>,
-    
-    // Custom model loading
-    pub custom_model_path: Option<String>,
-    pub custom_model_handle: Option<Handle<Gltf>>,
-    pub using_custom_model: bool,
-    pub custom_model_needs_load: bool,
 }
 
 impl Default for AppState {
@@ -218,31 +224,7 @@ impl Default for AppState {
             material_changed: false,
             textures_need_reload: false,
             drag_hover_path: None,
-            mesh_handle: None,
-            material_handle: None,
-            custom_model_path: None,
-            custom_model_handle: None,
-            using_custom_model: false,
-            custom_model_needs_load: false,
         }
     }
 }
 
-/// Tracks which textures have been loaded (for UI display)
-#[derive(Debug, Clone, Default)]
-pub struct LoadedTextures {
-    pub base_color: bool,
-    pub normal: bool,
-    pub roughness: bool,
-    pub metallic: bool,
-    pub orm: bool,
-    pub ao: bool,
-    pub emissive: bool,
-    pub height: bool,
-}
-
-impl LoadedTextures {
-    pub fn reset(&mut self) {
-        *self = Self::default();
-    }
-}
