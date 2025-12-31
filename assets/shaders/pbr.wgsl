@@ -110,12 +110,12 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let has_height = (material_params.texture_flags & (1u << 5u)) != 0u;
     
     // Sample textures only if they exist, otherwise use defaults
-    var base_color: vec3<f32>;
+    // For non-lit view modes, we'll sample raw textures without processing
+    var base_color_sample: vec4<f32>;
     if has_base_color {
-        let base_color_sample = textureSample(base_color_texture, base_color_sampler, in.uv);
-        base_color = base_color_sample.rgb * material_params.base_color_tint;
+        base_color_sample = textureSample(base_color_texture, base_color_sampler, in.uv);
     } else {
-        base_color = material_params.base_color_tint;
+        base_color_sample = vec4<f32>(material_params.base_color_tint, 1.0);
     }
     
     var normal_sample: vec4<f32>;
@@ -132,73 +132,82 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         metallic_roughness = vec4<f32>(0.0, 0.5, 0.0, 1.0);  // Default: no metallic, medium roughness
     }
     
-    // Extract values
-    let metallic = metallic_roughness.b * material_params.metallic;
-    let roughness = metallic_roughness.g * material_params.roughness;
-    
     // Handle different view modes
     let view_mode = material_params.view_mode;
     
     if view_mode == 0u {  // Lit
+        // Apply processing for lit mode
+        let base_color = base_color_sample.rgb * material_params.base_color_tint;
+        let metallic = metallic_roughness.b * material_params.metallic;
+        let roughness = metallic_roughness.g * material_params.roughness;
+        
         // Simple lighting (directional light)
         let light_dir = normalize(vec3<f32>(1.0, 1.0, 1.0));
         let N = normalize(in.world_normal);
         let NDotL = max(dot(N, light_dir), 0.0);
         let color = base_color * (0.3 + 0.7 * NDotL);
         return vec4<f32>(color, 1.0);
-    } else if view_mode == 1u {  // BaseColor
+    } else if view_mode == 1u {  // BaseColor - show raw texture
         if has_base_color {
-            return vec4<f32>(base_color, 1.0);
+            return base_color_sample;  // Raw texture, no tint applied
         } else {
             return vec4<f32>(0.5, 0.5, 0.5, 1.0);  // Gray if no texture
         }
-    } else if view_mode == 2u {  // Normals
+    } else if view_mode == 2u {  // Normals - show raw texture
         if has_normal {
-            return vec4<f32>(normal_sample.rgb, 1.0);
+            return normal_sample;  // Raw normal map texture
         } else {
             // Show geometry normals if no normal map
             let N = normalize(in.world_normal);
             return vec4<f32>(N * 0.5 + 0.5, 1.0);
         }
-    } else if view_mode == 3u {  // Roughness
+    } else if view_mode == 3u {  // Roughness - show raw texture channel
         if has_metallic_roughness {
-            return vec4<f32>(vec3<f32>(roughness), 1.0);
+            // Show raw roughness channel (green channel) as grayscale
+            return vec4<f32>(vec3<f32>(metallic_roughness.g), 1.0);
         } else {
             return vec4<f32>(0.5, 0.5, 0.5, 1.0);  // Gray if no texture
         }
-    } else if view_mode == 4u {  // Metallic
+    } else if view_mode == 4u {  // Metallic - show raw texture channel
         if has_metallic_roughness {
-            return vec4<f32>(vec3<f32>(metallic), 1.0);
+            // Show raw metallic channel (blue channel) as grayscale
+            return vec4<f32>(vec3<f32>(metallic_roughness.b), 1.0);
         } else {
             return vec4<f32>(0.0, 0.0, 0.0, 1.0);  // Black if no texture
         }
-    } else if view_mode == 5u {  // AO
-        if has_ao {
-            // AO would be in metallic_roughness.a or a separate texture
-            // For now, show metallic_roughness alpha if available
+    } else if view_mode == 5u {  // AO - show raw texture channel
+        if has_metallic_roughness {
+            // AO is typically in the alpha channel of metallic_roughness or ORM texture
+            // Show raw alpha channel as grayscale
             return vec4<f32>(vec3<f32>(metallic_roughness.a), 1.0);
         } else {
             return vec4<f32>(1.0, 1.0, 1.0, 1.0);  // White if no texture
         }
-    } else if view_mode == 6u {  // Emissive
-        if has_emissive {
-            // Emissive would be a separate texture
-            // For now, show black
-            return vec4<f32>(0.0, 0.0, 0.0, 1.0);
+    } else if view_mode == 6u {  // Emissive - show raw texture
+        // For now, emissive would need a separate texture binding
+        // If we had it, we'd show it here as raw texture
+        // For now, try to use base_color as fallback or show black
+        if has_base_color {
+            return base_color_sample;  // Fallback to base color
         } else {
             return vec4<f32>(0.0, 0.0, 0.0, 1.0);  // Black if no texture
         }
-    } else if view_mode == 7u {  // Height
-        if has_height {
-            // Height would be a separate texture
-            // For now, show gray
-            return vec4<f32>(0.5, 0.5, 0.5, 1.0);
+    } else if view_mode == 7u {  // Height - show raw texture
+        // Height would typically be in a separate texture
+        // For now, try to use metallic_roughness as fallback (some formats put height in red channel)
+        // Or we could use normal map as fallback
+        if has_metallic_roughness {
+            // Try red channel as height (common in some texture formats)
+            return vec4<f32>(vec3<f32>(metallic_roughness.r), 1.0);
+        } else if has_normal {
+            // Fallback to normal map (height maps are often similar to normal maps)
+            return vec4<f32>(normal_sample.rgb, 1.0);
         } else {
             return vec4<f32>(0.5, 0.5, 0.5, 1.0);  // Gray if no texture
         }
     }
     
-    // Fallback
-    return vec4<f32>(base_color, 1.0);
+    // Fallback - return base color sample
+    return base_color_sample;
 }
 
