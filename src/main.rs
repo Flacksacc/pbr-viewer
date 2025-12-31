@@ -27,7 +27,7 @@ use renderer::Renderer;
 use state_wgpu::AppState as WgpuAppState;
 use camera_wgpu::{OrbitCamera, Camera};
 use pipeline::RenderPipeline;
-use mesh_wgpu::create_sphere;
+use mesh_wgpu::{create_sphere, create_cube};
 use mesh_buffer::MeshBuffer;
 use texture_manager::TextureSet;
 use shader::load_shader_from_str;
@@ -244,6 +244,17 @@ fn render_frame(renderer: &mut Renderer, render_state: &mut RenderState, window:
                     }
                 }
                 render_state.app_state.textures_need_reload = false;
+            }
+            
+            // Handle mesh switching if needed
+            if render_state.app_state.mesh_changed {
+                let mesh_data = match render_state.app_state.current_mesh {
+                    mesh_wgpu::MeshType::Sphere => create_sphere(render_state.app_state.tessellation_level),
+                    mesh_wgpu::MeshType::Cube => create_cube(),
+                    _ => create_sphere(32), // Fallback to sphere
+                };
+                render_state.mesh_buffer = MeshBuffer::new(&renderer.device, &mesh_data);
+                render_state.app_state.mesh_changed = false;
             }
             
             // Update material if changed

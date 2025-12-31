@@ -62,7 +62,7 @@ pub enum MeshType {
 
 impl MeshType {
     pub fn primitives() -> &'static [MeshType] {
-        &[MeshType::Sphere, MeshType::Cube, MeshType::Plane, MeshType::RoundedRect]
+        &[MeshType::Sphere, MeshType::Cube]
     }
 
     pub fn name(&self) -> &'static str {
