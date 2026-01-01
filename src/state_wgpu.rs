@@ -3,6 +3,23 @@
 use glam::Quat;
 use crate::mesh_wgpu::MeshType;
 
+/// Default UI panel width
+pub const DEFAULT_UI_PANEL_WIDTH: f32 = 320.0;
+/// Minimum UI panel width to ensure controls remain visible
+pub const MIN_UI_PANEL_WIDTH: f32 = 280.0;
+/// Maximum UI panel width
+pub const MAX_UI_PANEL_WIDTH: f32 = 600.0;
+
+/// UI tab selection
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum UiTab {
+    #[default]
+    Mesh,
+    Material,
+    Light,
+    Textures,
+}
+
 /// View modes for visualizing different texture channels
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ViewMode {
@@ -220,6 +237,9 @@ pub struct AppState {
     pub model_rotation: Quat,
     pub is_rotating_model: bool,
     
+    // UI tab selection
+    pub ui_tab: UiTab,
+    
     // Change flags
     pub mesh_changed: bool,
     pub material_changed: bool,
@@ -227,6 +247,9 @@ pub struct AppState {
     
     // Drag and drop hover state
     pub drag_hover_path: Option<String>,
+    
+    // UI panel width (for resizable panel)
+    pub ui_panel_width: f32,
 }
 
 impl Default for AppState {
@@ -247,6 +270,8 @@ impl Default for AppState {
             material_changed: false,
             textures_need_reload: false,
             drag_hover_path: None,
+            ui_panel_width: DEFAULT_UI_PANEL_WIDTH,
+            ui_tab: UiTab::default(),
         }
     }
 }

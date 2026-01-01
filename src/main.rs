@@ -24,7 +24,7 @@ use winit::{
     window::{Window, WindowBuilder},
 };
 use renderer::Renderer;
-use state_wgpu::AppState as WgpuAppState;
+use state_wgpu::{AppState as WgpuAppState, DEFAULT_UI_PANEL_WIDTH};
 use camera_wgpu::{OrbitCamera, Camera};
 use pipeline::RenderPipeline;
 use mesh_wgpu::{create_sphere, create_cube};
@@ -93,9 +93,12 @@ fn main() -> Result<(), anyhow::Error> {
     let mesh_data = create_sphere(32);
     let mesh_buffer = MeshBuffer::new(&renderer.device, &mesh_data);
     
-    // Camera setup
+    // Camera setup (accounting for UI panel width)
     let orbit_camera = OrbitCamera::new(glam::Vec3::ZERO, 3.0);
-    let aspect = renderer.size.width as f32 / renderer.size.height as f32;
+    let pixels_per_point = window_ref.scale_factor() as f32;
+    let panel_width_pixels = DEFAULT_UI_PANEL_WIDTH * pixels_per_point;
+    let viewport_width = (renderer.size.width as f32 - panel_width_pixels).max(1.0);
+    let aspect = viewport_width / renderer.size.height as f32;
     let camera = orbit_camera.to_camera_with_aspect(aspect);
     render_pipeline.update_camera(&renderer.queue, &camera);
     
@@ -111,6 +114,8 @@ fn main() -> Result<(), anyhow::Error> {
         app_state.view_mode,
         &app_state.loaded_textures,
     );
+    // Initialize light direction
+    render_pipeline.update_light_direction(&renderer.queue, app_state.light_params.direction);
     
     let mut render_state = RenderState {
         render_pipeline,
@@ -142,8 +147,11 @@ fn main() -> Result<(), anyhow::Error> {
                     }
                     WindowEvent::Resized(physical_size) => {
                         renderer.resize(physical_size);
-                        // Update camera aspect
-                        render_state.camera.aspect = physical_size.width as f32 / physical_size.height as f32;
+                        // Update camera aspect ratio (accounting for UI panel)
+                        let pixels_per_point = window.scale_factor() as f32;
+                        let panel_width_pixels = render_state.app_state.ui_panel_width * pixels_per_point;
+                        let viewport_width = (physical_size.width as f32 - panel_width_pixels).max(1.0);
+                        render_state.camera.aspect = viewport_width / physical_size.height as f32;
                         render_state.render_pipeline.update_camera(&renderer.queue, &render_state.camera);
                     }
                     WindowEvent::RedrawRequested => {
@@ -171,20 +179,43 @@ fn main() -> Result<(), anyhow::Error> {
 fn handle_camera_input(render_state: &mut RenderState, queue: &wgpu::Queue) {
     let input = &mut render_state.input_state;
     
-    // Model rotation (left mouse button)
-    if input.left_mouse_pressed && input.mouse_delta.length_squared() > 0.0 {
-        let sensitivity = 0.005;
-        let rotation_y = glam::Quat::from_rotation_y(-input.mouse_delta.x * sensitivity);
-        let rotation_x = glam::Quat::from_rotation_x(-input.mouse_delta.y * sensitivity);
-        render_state.app_state.model_rotation = rotation_y * render_state.app_state.model_rotation * rotation_x;
+    // Track if model was rotated this frame
+    let mut model_rotated = false;
+    
+    // Model rotation (left mouse button) - rotate towards mouse direction
+    // Light direction stays fixed in world space - only model rotates
+    if input.left_mouse_pressed && !input.right_mouse_pressed && input.mouse_delta.length_squared() > 0.0 {
+        let sensitivity = 0.01;
+        // Rotate model so it follows the mouse drag direction
+        // Horizontal drag (right) rotates around Y axis to bring right side forward
+        // Vertical drag (down) rotates around X axis to bring bottom forward
+        let rotation_y = glam::Quat::from_rotation_y(input.mouse_delta.x * sensitivity);
+        let rotation_x = glam::Quat::from_rotation_x(input.mouse_delta.y * sensitivity);
+        // Apply rotations in order: first Y (horizontal), then X (vertical)
+        render_state.app_state.model_rotation = rotation_x * rotation_y * render_state.app_state.model_rotation;
+        model_rotated = true;
+        // Light direction is NOT updated - it stays fixed in world space
     }
     
-    // Camera rotation (right mouse button)
-    if input.right_mouse_pressed && input.mouse_delta.length_squared() > 0.0 {
-        let sensitivity = 0.005;
-        let delta_yaw = -input.mouse_delta.x * sensitivity;
-        let delta_pitch = -input.mouse_delta.y * sensitivity;
-        render_state.orbit_camera.rotate(delta_yaw, delta_pitch);
+    // Light direction control (right mouse button)
+    // Model rotation stays fixed - only light direction changes
+    // Use quaternion rotation for smooth movement, same as model rotation
+    if input.right_mouse_pressed && !input.left_mouse_pressed && input.mouse_delta.length_squared() > 0.0 {
+        let sensitivity = 0.01;
+        // Rotate light direction using quaternions for smooth rotation
+        // Horizontal movement rotates around Y axis, vertical around X axis
+        let rotation_y = glam::Quat::from_rotation_y(-input.mouse_delta.x * sensitivity);
+        let rotation_x = glam::Quat::from_rotation_x(-input.mouse_delta.y * sensitivity);
+        // Apply rotations to light direction vector
+        let mut light_dir = render_state.app_state.light_params.direction;
+        light_dir = rotation_x * rotation_y * light_dir;
+        // Normalize to ensure it stays a unit vector
+        light_dir = light_dir.normalize();
+        
+        // Update light direction immediately - this takes precedence over any material_changed updates
+        render_state.app_state.light_params.direction = light_dir;
+        render_state.render_pipeline.update_light_direction(queue, light_dir);
+        // Model rotation is NOT updated - it stays fixed
     }
     
     // Scroll zoom
@@ -197,9 +228,11 @@ fn handle_camera_input(render_state: &mut RenderState, queue: &wgpu::Queue) {
     render_state.camera = render_state.orbit_camera.to_camera_with_aspect(render_state.camera.aspect);
     render_state.render_pipeline.update_camera(queue, &render_state.camera);
     
-    // Update model matrix from rotation
-    let model_matrix = Mat4::from_quat(render_state.app_state.model_rotation);
-    render_state.render_pipeline.update_model(queue, model_matrix);
+    // Update model matrix from rotation (only if model was rotated this frame)
+    if model_rotated {
+        let model_matrix = Mat4::from_quat(render_state.app_state.model_rotation);
+        render_state.render_pipeline.update_model(queue, model_matrix);
+    }
     
     // Reset frame input
     input.reset_frame();
@@ -213,8 +246,18 @@ fn render_frame(renderer: &mut Renderer, render_state: &mut RenderState, window:
             // Begin egui frame
             render_state.egui_state.begin_frame(window);
             
-            // Build UI
-            build_ui(&render_state.egui_state.context, &mut render_state.app_state);
+            // Build UI and get current panel width
+            let panel_width = build_ui(&render_state.egui_state.context, &mut render_state.app_state);
+            
+            // Update camera aspect ratio if panel width changed
+            let pixels_per_point = window.scale_factor() as f32;
+            let panel_width_pixels = panel_width * pixels_per_point;
+            let viewport_width = (renderer.size.width as f32 - panel_width_pixels).max(1.0);
+            let new_aspect = viewport_width / renderer.size.height as f32;
+            if (render_state.camera.aspect - new_aspect).abs() > 0.001 {
+                render_state.camera.aspect = new_aspect;
+                render_state.render_pipeline.update_camera(&renderer.queue, &render_state.camera);
+            }
             
             // Handle texture loading if needed
             if render_state.app_state.textures_need_reload {
@@ -343,10 +386,16 @@ fn render_frame(renderer: &mut Renderer, render_state: &mut RenderState, window:
                     render_state.app_state.view_mode,
                     &render_state.app_state.loaded_textures,
                 );
+                // Also update light direction when material changes (in case it was changed via UI sliders)
+                render_state.render_pipeline.update_light_direction(
+                    &renderer.queue,
+                    render_state.app_state.light_params.direction,
+                );
                 render_state.app_state.material_changed = false;
             }
             
-            // Always update model matrix from rotation (ensures it's current even if handle_camera_input wasn't called)
+            // Ensure model matrix is always current (in case handle_camera_input wasn't called)
+            // This is safe because model_rotation only changes when left mouse is pressed
             let model_matrix = Mat4::from_quat(render_state.app_state.model_rotation);
             render_state.render_pipeline.update_model(&renderer.queue, model_matrix);
             
@@ -404,6 +453,12 @@ fn render_frame(renderer: &mut Renderer, render_state: &mut RenderState, window:
                     occlusion_query_set: None,
                     timestamp_writes: None,
                 });
+                
+                // Set viewport to exclude UI panel area (render 3D to the right of the panel)
+                // Use the dynamic panel width from the UI
+                let viewport_x = panel_width_pixels;
+                let viewport_height = renderer.size.height as f32;
+                render_pass.set_viewport(viewport_x, 0.0, viewport_width, viewport_height, 0.0, 1.0);
                 
                 // Set render pipeline
                 render_pass.set_pipeline(&render_state.render_pipeline.pipeline);

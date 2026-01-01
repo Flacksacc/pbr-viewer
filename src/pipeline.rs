@@ -47,7 +47,7 @@ impl ModelUniform {
 
 /// Material parameters uniform
 #[repr(C, align(16))]
-#[derive(Debug, Clone, Copy, Pod, Zeroable)]
+#[derive(Debug, Clone, Copy)]
 pub struct MaterialUniform {
     pub base_color_tint: [f32; 3],
     pub _padding0: f32,
@@ -57,8 +57,12 @@ pub struct MaterialUniform {
     pub uv_scale: f32,
     pub view_mode: u32,  // ViewMode as u32
     pub texture_flags: u32,  // Bit flags: bit 0=base_color, bit 1=normal, bit 2=metallic_roughness, bit 3=ao, bit 4=emissive, bit 5=height
-    pub _padding1: [u32; 2],  // Padding to make struct 48 bytes (multiple of 16)
+    pub light_direction: [f32; 3],  // Light direction (normalized)
+    pub _padding1: f32,  // Padding to maintain 16-byte alignment
 }
+
+unsafe impl bytemuck::Pod for MaterialUniform {}
+unsafe impl bytemuck::Zeroable for MaterialUniform {}
 
 impl MaterialUniform {
     pub fn new() -> Self {
@@ -71,7 +75,8 @@ impl MaterialUniform {
             uv_scale: 1.0,
             view_mode: 0,  // Lit
             texture_flags: 0,
-            _padding1: [0, 0],
+            light_direction: [-1.0, -1.0, -1.0],  // Default light direction
+            _padding1: 0.0,
         }
     }
 }
@@ -347,6 +352,16 @@ impl RenderPipeline {
         if loaded_textures.height { flags |= 1 << 5; }
         self.material_uniform.texture_flags = flags;
         
+        queue.write_buffer(&self.material_buffer, 0, bytemuck::cast_slice(&[self.material_uniform]));
+    }
+    
+    pub fn update_light_direction(
+        &mut self,
+        queue: &Queue,
+        light_direction: glam::Vec3,
+    ) {
+        let normalized = light_direction.normalize();
+        self.material_uniform.light_direction = [normalized.x, normalized.y, normalized.z];
         queue.write_buffer(&self.material_buffer, 0, bytemuck::cast_slice(&[self.material_uniform]));
     }
 }

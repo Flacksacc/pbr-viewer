@@ -52,6 +52,8 @@ struct MaterialParams {
     uv_scale: f32,
     view_mode: u32,
     texture_flags: u32,
+    light_direction: vec3<f32>,
+    _padding1: f32,
 }
 
 @vertex
@@ -63,21 +65,18 @@ fn vs_main(in: VertexInput) -> VertexOutput {
     out.world_position = world_pos.xyz;
     out.clip_position = view_proj * world_pos;
     
-    // Calculate proper normal matrix (inverse transpose of upper-left 3x3 of model matrix)
-    // For rotation matrices, transpose equals inverse, so transpose is correct
-    // Extract upper-left 3x3 from model matrix
-    let m = mat3x3<f32>(
+    // Transform normal to world space
+    // For rotation-only matrices, we simply multiply by the rotation matrix
+    // Extract upper-left 3x3 from model matrix (the rotation part)
+    let rotation = mat3x3<f32>(
         model[0].xyz,
         model[1].xyz,
         model[2].xyz,
     );
     
-    // For rotation matrices: transpose = inverse, so normal_matrix = transpose(m)
-    // For general matrices, we'd need inverse(transpose(m)), but for pure rotations this is correct
-    let normal_matrix = transpose(m);
-    
-    // Transform normal to world space
-    out.world_normal = normalize(normal_matrix * in.normal);
+    // Transform normal by the rotation matrix to get world-space normal
+    // This makes the normal rotate WITH the model, keeping light fixed in world space
+    out.world_normal = normalize(rotation * in.normal);
     
     // Apply UV tiling with center pivot
     // The UI "scale" is tile size: smaller scale = more repeats (finer pattern)
@@ -88,7 +87,7 @@ fn vs_main(in: VertexInput) -> VertexOutput {
     out.uv = (in.uv - pivot) * tiling + pivot;
     
     // Transform tangent to world space
-    let T = normalize(normal_matrix * in.tangent.xyz);
+    let T = normalize(rotation * in.tangent.xyz);
     let N = out.world_normal;
     // Recalculate bitangent to ensure orthogonality
     let B = cross(N, T) * in.tangent.w;
@@ -142,7 +141,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         let roughness = metallic_roughness.g * material_params.roughness;
         
         // Simple lighting (directional light)
-        let light_dir = normalize(vec3<f32>(1.0, 1.0, 1.0));
+        let light_dir = normalize(material_params.light_direction);
         let N = normalize(in.world_normal);
         let NDotL = max(dot(N, light_dir), 0.0);
         let color = base_color * (0.3 + 0.7 * NDotL);
